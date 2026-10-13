@@ -267,7 +267,7 @@ async function compRenderVideo(){
   const destination=audio.createMediaStreamDestination();
   element=document.createElement('video');element.preload='auto';element.playsInline=true;element.muted=false;element.volume=1;
   element.style.cssText='position:fixed;width:1px;height:1px;opacity:0;left:-100px;top:-100px;pointer-events:none';document.body.append(element);
-  const node=audio.createMediaElementSource(element);node.connect(destination);await audio.resume();
+  const node=audio.createMediaElementSource(element),fadeGain=audio.createGain();node.connect(fadeGain);fadeGain.connect(destination);await audio.resume();
   const videoStream=canvas.captureStream(30);
   stream=new MediaStream([...videoStream.getVideoTracks(),...destination.stream.getAudioTracks()]);
   const chunks=[];recorder=new MediaRecorder(stream,{mimeType:opts,videoBitsPerSecond:4000000,audioBitsPerSecond:128000});recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
@@ -290,7 +290,12 @@ async function compRenderVideo(){
      if(terminated)return;
      try{
       board.fillStyle='#09111b';board.fillRect(0,0,1280,720);if(element.readyState>=2)board.drawImage(element,(1280-dw)/2,(720-dh)/2,dw,dh);
-      let pos=element.currentTime-clip.start;comp.renderPercent=Math.max(0,Math.min(99,((done+Math.max(0,pos))/total)*100));
+      const pos=element.currentTime-clip.start;
+      // Fast fades prevent harsh audio cuts and add a subtle visual dip.
+      const cutFade=Math.max(0,Math.min(1,pos/.18,(clip.end-element.currentTime)/.18));
+      fadeGain.gain.setTargetAtTime(cutFade,audio.currentTime,.016);
+      if(cutFade<1){board.fillStyle='rgba(3,8,18,'+(1-cutFade)+')';board.fillRect(0,0,1280,720);}
+      comp.renderPercent=Math.max(0,Math.min(99,((done+Math.max(0,pos))/total)*100));
       const fill=document.getElementById('comp-progress-fill');if(fill)fill.style.width=comp.renderPercent+'%';const txt=document.getElementById('comp-progress-text');if(txt)txt.textContent=comp.renderStatus+' · '+Math.round(comp.renderPercent)+'%';
       if(element.currentTime>=Math.min(clip.end,element.duration-.02)||element.ended){terminated=true;clearTimeout(timeout);element.pause();resolve();return}
       requestAnimationFrame(tick);
