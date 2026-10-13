@@ -6,6 +6,45 @@ const cfg=window.TREND_CONFIG||{};
 const configured=Boolean(cfg.supabaseUrl && cfg.supabasePublishableKey);
 const googleConfigured=Boolean(cfg.googleClientId);
 const captchaEnabled=Boolean(cfg.turnstileSiteKey);
+// Store this browser's session persistently only when opted in. Supabase still
+// validates the JWT and database RLS requires assurance level aal2.
+const REMEMBER_KEY='trend-studio:remember-device:v1';
+let rememberDevice=false;
+try{rememberDevice=window.localStorage.getItem(REMEMBER_KEY)==='1';}catch{}
+const authStorageKeys=new Set();
+const authStorage={
+ getItem(key){authStorageKeys.add(key);
+  try{return (rememberDevice?window.localStorage:window.sessionStorage).getItem(key);}catch{return null;}
+ },
+ setItem(key,value){authStorageKeys.add(key);
+  const dest=rememberDevice?window.localStorage:window.sessionStorage;
+  const other=rememberDevice?window.sessionStorage:window.localStorage;
+  dest.setItem(key,value);try{other.removeItem(key);}catch{}
+ },
+ removeItem(key){authStorageKeys.add(key);
+  for(const store of [window.sessionStorage,window.localStorage]){try{store.removeItem(key);}catch{}}
+ }
+};
+function changeRememberDevice(enabled){
+ const next=Boolean(enabled);
+ if(rememberDevice!==next){
+  const source=rememberDevice?window.localStorage:window.sessionStorage;
+  const dest=next?window.localStorage:window.sessionStorage;
+  try{
+   for(const key of authStorageKeys){
+    const value=source.getItem(key);
+    if(value!==null){dest.setItem(key,value);source.removeItem(key);}
+   }
+   window.localStorage.setItem(REMEMBER_KEY,next?'1':'0');
+   rememberDevice=next;
+  }catch(e){toast('Device preference could not be saved; check browser storage settings.');return;}
+ }
+ document.querySelectorAll('[data-remember-device]').forEach(box=>{box.checked=rememberDevice;});
+}
+function rememberChoice(){
+ return '<label class="checkline" style="margin:16px 0 5px;cursor:pointer"><input type="checkbox" data-remember-device '+(rememberDevice?'checked':'')+'> <span>Remember this device</span></label>'+
+ '<p class="cloud-note" style="margin:5px 0 10px">Keep this browser signed in after verification. Use only on your private device. Signing out, revoking the session or clearing site data requires 2FA again.</p>';
+}
 const cloud={sb:null,user:null,loading:false,busy:false,lastSaved:'',timer:null,inFlight:false,setupError:'',syncInfo:'Guest — local only',authMode:'register',recovery:false,canWrite:false,mfaReady:false,mfaFactor:null,mfaEnrollment:null,mfaChecking:false,captchaToken:null,captchaWidget:null};
 const yt={token:null,readExpires:0,channel:null,ownVideos:[],scanning:false,loadingRetention:false,channelStats:{},detailBusy:false};
 const READ_SCOPES='https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
@@ -51,7 +90,7 @@ function accountPage(){const msg=cloud.syncInfo;
  `<div class="settings-grid"><div class="panel settings-block">
  ${cloud.user?`<h3>${cloud.mfaReady?'✓ Signed in securely':'🔐 Two-factor verification needed'}</h3><p><span class="tag green">${html(cloud.user.email||'Account')}</span></p><p>${html(msg)}</p><div class="settings-note">Changes to your ideas, keywords and competitor watchlist sync automatically between devices. Your actual video files stay on your computer.</div>
  ${!cloud.mfaReady?`<p class="cloud-note">Finish the authenticator-app verification before your synced projects become available.</p><button class="btn btn-primary" data-cloud="resume-mfa">Complete 2FA</button>`:''} ${cloud.recovery?`<form id="cloud-recovery-form"><label class="cloud-label">Choose a new password</label><input class="field wide" name="password" type="password" minlength="12" autocomplete="new-password" required><button class="btn btn-primary" type="submit">Set new password</button></form>`:''}
- <div class="cloud-actions"><button class="btn btn-outline" data-cloud="sync">↻ Sync now</button><button class="btn btn-outline" data-cloud="import-guest">↑ Import this device’s guest workspace</button><button class="btn" data-cloud="logout">Sign out</button></div>`:
+ ${rememberChoice()}<div class="cloud-actions"><button class="btn btn-outline" data-cloud="sync">↻ Sync now</button><button class="btn btn-outline" data-cloud="import-guest">↑ Import this device’s guest workspace</button><button class="btn" data-cloud="logout">Sign out</button></div>`:
  `<h3>${cloud.authMode==='register'?'Create your account':'Welcome back'}</h3><button class="btn btn-primary" data-cloud="open-auth">Open quick registration / login →</button>
  ${configured&&!captchaEnabled?`<p>Use your email address and password. Email confirmation may be required on registration.</p>
  <form id="cloud-auth-form"><label class="cloud-label">Email address</label><input class="field wide" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
@@ -63,7 +102,7 @@ function accountPage(){const msg=cloud.syncInfo;
  configured?`<p>Click the quick registration button above to sign in securely with the anti-bot challenge.</p>`:
  `<div class="settings-note">Cloud account setup isn't connected yet. Add your Supabase project URL and publishable key to <code>config.js</code>, then publish the site. The editor still works as a guest.</div><p><a class="link-accent" href="https://supabase.com/dashboard/projects" target="_blank" rel="noopener">Create a free Supabase project ↗</a></p>`}
  <p class="cloud-status" aria-live="polite">${html(msg)}</p>`}</div>
- <div class="panel settings-block"><h3>What syncs?</h3><p>✓ Ideas and production stages</p><p>✓ Competitor channel watchlist</p><p>✓ Trend search keywords and date window</p><p>✓ Private account per email address</p><p class="cloud-note">Not synced: source MP4 files, rendered compilations, retention CSVs, Google access tokens or Google passwords. These stay on your device. YouTube needs to be reauthorized per browser session. Account sessions end when you close the browser tab.</p>
+ <div class="panel settings-block"><h3>What syncs?</h3><p>✓ Ideas and production stages</p><p>✓ Competitor channel watchlist</p><p>✓ Trend search keywords and date window</p><p>✓ Private account per email address</p><p class="cloud-note">Not synced: source MP4 files, rendered compilations, retention CSVs, Google access tokens or Google passwords. These stay on your device. YouTube needs to be reauthorized per browser session. Unremembered sessions normally end when you close the browser tab.</p>
  <button class="btn btn-outline" data-action="export">↓ Download workspace backup</button>
  <label class="comp-file-btn" style="margin-top:10px">↑ Import exported workspace JSON<input type="file" accept=".json,application/json" id="import-cloud-workspace"></label>
  <p class="cloud-note">Import accepts the JSON backup exported from the earlier offline Trend Studio too. If you are signed in, the imported workspace will replace the one synced to your account.</p></div></div>`;}
@@ -78,7 +117,7 @@ async function loadCloud(){if(!cloud.user||!cloud.sb||!cloud.mfaReady)return;con
 async function initCloud(){if(!configured){cloud.syncInfo='Guest mode · Configure Supabase to enable accounts';badge();return;}
  if(!/^https:\/\/[^/]+\.supabase\.co\/?$/.test(cfg.supabaseUrl)){cloud.syncInfo='Invalid Supabase URL in config.js';return;}
  if(!window.supabase?.createClient){cloud.syncInfo='Supabase library failed to load. Check your network.';render();return;}
- try{cloud.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey,{auth:{persistSession:true,storage:window.sessionStorage,autoRefreshToken:true,detectSessionInUrl:true}});
+ try{cloud.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey,{auth:{persistSession:true,storage:authStorage,autoRefreshToken:true,detectSessionInUrl:true}});
  cloud.sb.auth.onAuthStateChange((event,session)=>{if(event==='TOKEN_REFRESHED'&&session?.user&&!cloud.mfaReady)queueMicrotask(()=>checkMFA());if(event==='PASSWORD_RECOVERY'){cloud.recovery=true;queueMicrotask(()=>{state.page='account';render();});}const prior=cloud.user?.id||null,next=session?.user||null;
  if((next?.id||null)!==prior){cloud.user=next;cloud.canWrite=false;clearTimeout(cloud.timer);
  if(next)queueMicrotask(()=>checkMFA());else{cloud.mfaReady=false;cloud.mfaFactor=null;cloud.mfaEnrollment=null;cloud.lastSaved='';applyPayload(guestData);cloud.syncInfo='Guest — work is saved on this device only';render();}}
@@ -144,7 +183,7 @@ function showAuthModal(){
  ${cloud.authMode==='register'?`<label>Confirm password</label><input class="field wide" type="password" name="confirm" autocomplete="new-password" required minlength="12"></input>`:''}
  ${captchaEnabled?`<label>Spam protection</label><div id="cloud-turnstile" aria-label="Bot verification"></div>`:''}
  <button class="btn btn-primary wide" type="submit" ${cloud.busy?'disabled':''}>${cloud.authMode==='register'?'Create account':'Log in'} →</button></form>
- <div class="modal-center"><span>or</span></div><button class="btn btn-outline wide" data-cloud="google-login" ${cloud.busy?'disabled':''}>Continue with Google</button>
+ ${rememberChoice()}<div class="modal-center"><span>or</span></div><button class="btn btn-outline wide" data-cloud="google-login" ${cloud.busy?'disabled':''}>Continue with Google</button>
  <p class="cloud-note">${html(cloud.syncInfo)}</p><button class="panel-link" data-cloud="mode">${cloud.authMode==='register'?'Already registered? Sign in':'New here? Register'}</button>
  <button class="panel-link" data-cloud="reset">Forgot password?</button>`:
  `<p class="settings-note">Account registration is not live yet. An administrator must add a Supabase project URL and publishable key to config.js and configure authentication.</p>`}
@@ -191,13 +230,13 @@ async function enrollMFA(){
  <details style="margin-top:12px"><summary style="cursor:pointer;color:#baaaff;font-weight:bold">Show manual setup key (keep private)</summary><code class="mfa-secret">${html(t?.secret||'')}</code></details>
  <button class="btn btn-outline wide" type="button" data-cloud="regenerate-mfa" style="margin-top:12px">↻ Regenerate setup key</button>
  <form id="mfa-verify-form"><label>Six-digit authenticator code</label><input class="field wide" name="code" required pattern="[0-9]{6}" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
- <button class="btn btn-primary wide" type="submit">Verify and secure account →</button></form>
+ ${rememberChoice()}<button class="btn btn-primary wide" type="submit">Verify and secure account →</button></form>
  <p class="cloud-note">Your cloud workspace is locked until 2FA succeeds. If you lose your authenticator, account recovery requires administrator help; Supabase does not provide backup codes.</p>
  <button class="panel-link" data-cloud="logout">Use another account</button></div>`);
 }
 function showMfaChallenge(){openModal(`<div class="auth-dialog"><div class="auth-icon">🔑</div><h2>Two-factor verification</h2><p>Enter the six-digit code from your authenticator app to unlock your projects.</p>
  <form id="mfa-verify-form"><label>Authenticator code</label><input class="field wide" name="code" required pattern="[0-9]{6}" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" autofocus>
- <button class="btn btn-primary wide" type="submit">Verify and sign in →</button></form><button class="panel-link" data-cloud="logout">Sign in with another account</button></div>`);}
+ ${rememberChoice()}<button class="btn btn-primary wide" type="submit">Verify and sign in →</button></form><button class="panel-link" data-cloud="logout">Sign in with another account</button></div>`);}
 async function verifyMFA(form){const code=String(new FormData(form).get('code')||'').trim();if(!/^\d{6}$/.test(code))return toast('Enter the six-digit code.');
  if(!cloud.sb||!cloud.mfaFactor)return toast('Start 2FA setup again.');
  const submit=form.querySelector('button[type="submit"]');submit.disabled=true;
@@ -371,6 +410,10 @@ setPage=function(page){const names={overview:'Overview',radar:'Video radar',comp
  if(!names[page])return;state.page=page;document.querySelectorAll('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.page===page));document.getElementById('page-crumb').textContent=names[page];render();window.scrollTo(0,0);};
 setMode=function(mode){state.mode=mode;badge();};
 scan=scanLive;
+document.addEventListener('change',e=>{
+ if(!e.target?.matches?.('[data-remember-device]'))return;
+ changeRememberDevice(e.target.checked);
+});
 document.addEventListener('change',async e=>{if(e.target?.id!=='import-cloud-workspace')return;
  const file=e.target.files?.[0];if(!file)return;
  try{if(file.size>2*1024*1024)throw Error('Workspace backup must be smaller than 2 MB.');
