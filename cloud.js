@@ -118,7 +118,7 @@ function showCreatorSetup(){
  openModal(htmlForm);
 }
 function saveCreatorProfile(form){
- const data=new FormData(form),niche=String(data.get('niche')||'kids'),preset=nichePreset(niche);
+ const data=new FormData(form),chosen=String(data.get('niche')||'kids'),niche=Object.prototype.hasOwnProperty.call(NICHE_PRESETS,chosen)?chosen:'kids',preset=nichePreset(niche);
  const topics=data.getAll('topics').map(String).filter(t=>preset.topics.includes(t));
  if(!topics.length)return toast('Select at least one topic.');
  const old=creatorProfile;
@@ -128,9 +128,9 @@ function saveCreatorProfile(form){
  else if(!old)state.channels=[];
  applyCreatorTopics();
  state.keywords=creatorProfile.topics.map(t=>t+' '+preset.label);
- if(state.mode!=='live')state.videos=[];
+ state.videos=[];state.mode='demo';
  cloud.lastSaved='';persist();saveCloud();closeModal();setPage('youtube');
- toast('Preferences saved. Connect YouTube to see real videos and thumbnails.');
+ if(canRead())scanLive();else toast('Preferences saved. Connect YouTube to see real videos and thumbnails.');
 }
 function creatorSummary(){
  if(!creatorProfile)return '<p class="cloud-note">Not set up yet. Add your interests to personalize trends and competitors.</p>';
