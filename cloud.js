@@ -406,7 +406,11 @@ async function scanLive(opts={}){if(yt.scanning)return;if(!canRead()){if(!opts.b
  const background=opts.background===true;let succeeded=false;
  yt.scanning=true;const status=document.getElementById('yt-activity');if(status)status.textContent='Scanning…';let all=[],errs=[];
  try{if(!yt.ownVideos.length||Date.now()-(yt.ownRefreshedAt||0)>30*60000)await loadOwnVideos();if(yt.channel)all.push(...yt.ownVideos.map(x=>toRadarVideo(x,yt.channel.title,'@'+yt.channel.id)));
- const list=state.channels.filter(c=>c.role==='competitor').slice(0,8);
+ if(yt.channel){try{
+  const own=await ytRequest('/youtube/v3/channels',{part:'snippet,statistics',id:yt.channel.id});
+  if(own.items?.[0])yt.channelStats[yt.channel.id]=own.items[0];
+ }catch(e){/* Continue scanning even if public own-channel metadata is unavailable. */}}
+ const list=state.channels.filter(c=>c.role==='competitor').slice(0,10);
  for(let n=0;n<list.length;n++){const c=list[n];if(!canRead())throw Error('Google access expired. Reconnect YouTube.');
  const handle=c.handle;try{
  const info=await ytRequest('/youtube/v3/channels',{part:'snippet,contentDetails,statistics',...(c.channelId?{id:c.channelId}:handle.startsWith('UC')?{id:handle}:{forHandle:handle})});
@@ -428,7 +432,7 @@ function youtubePage(){return header('Connect your <span class="title-accent">Yo
  <div class="cloud-actions"><button class="btn btn-primary" data-youtube="connect">${yt.channel?'↻ Reauthorize':'▶ Connect YouTube'}</button><button class="btn" data-youtube="scan" ${!yt.channel||yt.scanning?'disabled':''}>${yt.scanning?'Scanning…':'↻ Scan my channel + competitors'}</button><button class="btn btn-outline" data-youtube="disconnect" ${!yt.channel?'disabled':''}>Disconnect</button></div>
  <p id="yt-activity" class="cloud-status">${html(yt.scanReport|| (yt.channel?'Ready for a real-data scan':'Disconnected'))}</p>
  ${!googleConfigured?`<div class="settings-note">One-time app setup needed: add the public Google OAuth Web Client ID in <code>config.js</code> (<code>googleClientId</code>). Use the same Web client configured for Supabase login; Google Cloud must have YouTube Data API v3 and YouTube Analytics API enabled. <a class="panel-link" target="_blank" rel="noopener" href="https://console.cloud.google.com/auth/clients">Find Client ID ↗</a></div>`:''}
- </div><div class="panel settings-block"><h3>Read-only channel connection</h3><p>✓ Index recent videos on your channel and up to 8 public competitor channels.</p><p>✓ Retrieve your own retention curves for videos that have Analytics data.</p><p>✓ Generate a private-upload metadata kit for manual review in YouTube Studio. This deployment does not request YouTube write permission.</p><p class="cloud-note">Not available via public API: competitor retention, reliable live views/hour, downloading video originals, or creating YouTube Studio's internal unfinished draft. No edit, delete, or upload permissions are requested. YouTube permissions must be reauthorized when the access token expires.</p></div></div>
+ </div><div class="panel settings-block"><h3>Read-only channel connection</h3><p>✓ Index recent videos on your channel and up to 10 public competitor channels.</p><p>✓ Retrieve your own retention curves for videos that have Analytics data.</p><p>✓ Generate a private-upload metadata kit for manual review in YouTube Studio. This deployment does not request YouTube write permission.</p><p class="cloud-note">Not available via public API: competitor retention, reliable live views/hour, downloading video originals, or creating YouTube Studio's internal unfinished draft. No edit, delete, or upload permissions are requested. YouTube permissions must be reauthorized when the access token expires.</p></div></div>
  ${yt.ownVideos.length?`<div class="panel settings-block"><h3>Your latest uploads · ${yt.ownVideos.length}</h3><p>Click the thumbnail to watch and see analytics.</p><div class="video-list">${yt.ownVideos.slice(0,18).map(v=>videoRow(normalizeVideos([toRadarVideo(v,yt.channel.title,'@'+yt.channel.id)])[0])).join('')}</div></div>`:''}`;}
 async function fetchRetention(srcId,videoId){if(!canRead())return toast('Reconnect YouTube before importing Analytics.');
  const s=compSource(srcId);if(!s||!yt.ownVideos.some(v=>v.id===videoId))return toast('Choose one of your own channel videos.');
