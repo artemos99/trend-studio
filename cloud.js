@@ -5,7 +5,8 @@
 const cfg=window.TREND_CONFIG||{};
 const configured=Boolean(cfg.supabaseUrl && cfg.supabasePublishableKey);
 const googleConfigured=Boolean(cfg.googleClientId);
-const cloud={sb:null,user:null,loading:false,busy:false,lastSaved:'',timer:null,inFlight:false,setupError:'',syncInfo:'Guest — local only',authMode:'register',recovery:false,canWrite:false,mfaReady:false,mfaFactor:null,mfaEnrollment:null,mfaChecking:false};
+const captchaEnabled=Boolean(cfg.turnstileSiteKey);
+const cloud={sb:null,user:null,loading:false,busy:false,lastSaved:'',timer:null,inFlight:false,setupError:'',syncInfo:'Guest — local only',authMode:'register',recovery:false,canWrite:false,mfaReady:false,mfaFactor:null,mfaEnrollment:null,mfaChecking:false,captchaToken:null,captchaWidget:null};
 const yt={token:null,readExpires:0,channel:null,ownVideos:[],scanning:false,loadingRetention:false,channelStats:{},detailBusy:false};
 const READ_SCOPES='https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
 const guestData=(()=>{try{return JSON.parse(localStorage.getItem(STORAGE)||'{}')}catch{return {}}})();
@@ -52,13 +53,14 @@ function accountPage(){const msg=cloud.syncInfo;
  ${!cloud.mfaReady?`<p class="cloud-note">Finish the authenticator-app verification before your synced projects become available.</p><button class="btn btn-primary" data-cloud="resume-mfa">Complete 2FA</button>`:''} ${cloud.recovery?`<form id="cloud-recovery-form"><label class="cloud-label">Choose a new password</label><input class="field wide" name="password" type="password" minlength="12" autocomplete="new-password" required><button class="btn btn-primary" type="submit">Set new password</button></form>`:''}
  <div class="cloud-actions"><button class="btn btn-outline" data-cloud="sync">↻ Sync now</button><button class="btn btn-outline" data-cloud="import-guest">↑ Import this device’s guest workspace</button><button class="btn" data-cloud="logout">Sign out</button></div>`:
  `<h3>${cloud.authMode==='register'?'Create your account':'Welcome back'}</h3><button class="btn btn-primary" data-cloud="open-auth">Open quick registration / login →</button>
- ${configured?`<p>Use your email address and password. Email confirmation may be required on registration.</p>
+ ${configured&&!captchaEnabled?`<p>Use your email address and password. Email confirmation may be required on registration.</p>
  <form id="cloud-auth-form"><label class="cloud-label">Email address</label><input class="field wide" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
  <label class="cloud-label">Password</label><input class="field wide" name="password" type="password" autocomplete="${cloud.authMode==='register'?'new-password':'current-password'}" minlength="12" required placeholder="At least 12 characters">
  <button class="btn btn-primary" type="submit" ${cloud.busy?'disabled':''}>${cloud.authMode==='register'?'Register account':'Log in'}</button></form>
  <div class="cloud-actions" style="margin-top:18px"><button class="btn btn-outline" data-cloud="google-login" ${cloud.busy?'disabled':''}>Continue with Google</button></div>
  <p class="cloud-note">Google login requires the Google provider to be enabled in Supabase. Your YouTube connection uses a separate permission request.</p>
  <p><button class="panel-link" data-cloud="mode">${cloud.authMode==='register'?'Already registered? Log in':'Need an account? Register'}</button> <button class="panel-link" data-cloud="reset">Forgot password?</button></p>`:
+ configured?`<p>Click the quick registration button above to sign in securely with the anti-bot challenge.</p>`:
  `<div class="settings-note">Cloud account setup isn't connected yet. Add your Supabase project URL and publishable key to <code>config.js</code>, then publish the site. The editor still works as a guest.</div><p><a class="link-accent" href="https://supabase.com/dashboard/projects" target="_blank" rel="noopener">Create a free Supabase project ↗</a></p>`}
  <p class="cloud-status" aria-live="polite">${html(msg)}</p>`}</div>
  <div class="panel settings-block"><h3>What syncs?</h3><p>✓ Ideas and production stages</p><p>✓ Competitor channel watchlist</p><p>✓ Trend search keywords and date window</p><p>✓ Private account per email address</p><p class="cloud-note">Not synced: source MP4 files, rendered compilations, retention CSVs, Google access tokens or Google passwords. These stay on your device. YouTube needs to be reauthorized per browser session. Account sessions end when you close the browser tab.</p>
@@ -87,12 +89,14 @@ async function initCloud(){if(!configured){cloud.syncInfo='Guest mode · Configu
  }catch(e){cloud.syncInfo='Account setup error: '+e.message;toast(cloud.syncInfo);render();}
 }
 async function authSubmit(form){if(!cloud.sb)return toast('Configure Supabase first.');const data=new FormData(form),email=String(data.get('email')||'').trim(),password=String(data.get('password')||'');
- if(!email||password.length<12)return toast('Enter your email and a password of at least 12 characters.');cloud.busy=true;
- try{const args={email,password};const result=cloud.authMode==='register'?await cloud.sb.auth.signUp({...args,options:{emailRedirectTo:location.origin+location.pathname}}):await cloud.sb.auth.signInWithPassword(args);
+ if(!email||password.length<12)return toast('Enter your email and a password of at least 12 characters.');
+ if(captchaEnabled&&!cloud.captchaToken)return toast('Complete the bot verification in the registration pop-up.');cloud.busy=true;
+ try{const args={email,password};const captchaOpts=captchaEnabled?{captchaToken:cloud.captchaToken}:{};
+ const result=cloud.authMode==='register'?await cloud.sb.auth.signUp({...args,options:{emailRedirectTo:location.origin+location.pathname,...captchaOpts}}):await cloud.sb.auth.signInWithPassword({...args,options:captchaOpts});
  if(result.error)throw result.error;
  if(cloud.authMode==='register'&&!result.data.session){cloud.syncInfo='Account created. Confirm your email, then sign in to set up the authenticator app.';cloud.authMode='login';showAuthModal();}
  else{cloud.syncInfo='First sign-in successful. Complete 2FA to unlock your workspace.';if(result.data.session)await checkMFA();}
- }catch(e){cloud.syncInfo='Sign-in error: '+e.message;}finally{cloud.busy=false;render();if(!cloud.user)showAuthModal();}
+ }catch(e){cloud.syncInfo='Sign-in error: '+e.message;}finally{cloud.busy=false;cloud.captchaToken=null;render();if(!cloud.user)showAuthModal();}
 }
 async function accountAction(action){if(action==='open-auth'){cloud.authMode=cloud.user?'login':'register';if(cloud.user){setPage('account');if(!cloud.mfaReady)checkMFA();}else showAuthModal();return;}
  if(action==='resume-mfa'){await checkMFA();return;}
@@ -105,8 +109,9 @@ async function accountAction(action){if(action==='open-auth'){cloud.authMode=clo
   return;
  }
  if(action==='logout'){if(!cloud.sb)return;await cloud.sb.auth.signOut();cloud.mfaReady=false;cloud.mfaEnrollment=null;yt.token=null;yt.channel=null;yt.ownVideos=[];yt.channelStats={};state.videos=makeDemo();setMode('demo');cloud.user=null;cloud.syncInfo='Signed out; guest work remains local';applyPayload(guestData);render();return;}
- if(action==='reset'){if(!cloud.sb)return toast('Configure Supabase first');const email=prompt('Email address for your password reset:');if(!email)return;
- const {error}=await cloud.sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname});toast(error?'Error: '+error.message:'If this email has an account, check it for reset instructions.');return;}
+ if(action==='reset'){if(!cloud.sb)return toast('Configure Supabase first');if(captchaEnabled&&!cloud.captchaToken)return toast('Complete the bot verification in the sign-in pop-up before requesting a password reset.');const email=prompt('Email address for your password reset:');if(!email)return;
+ const {error}=await cloud.sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname,...(captchaEnabled?{captchaToken:cloud.captchaToken}:{})});
+ if(captchaEnabled)showAuthModal();toast(error?'Error: '+error.message:'If this email has an account, check it for reset instructions.');return;}
  if(!cloud.user)return toast('Sign in first.');
  if(action==='sync'){await saveCloud();await loadCloud();toast(cloud.syncInfo);return;}
  if(action==='import-guest'){if(!confirm('Replace your cloud workspace with the guest workspace saved on THIS device?'))return;applyPayload(guestData);cloud.lastSaved='';await saveCloud();render();toast(cloud.syncInfo);return;}
@@ -114,6 +119,8 @@ async function accountAction(action){if(action==='open-auth'){cloud.authMode=clo
 
 // Account modal: first factor is handled by Supabase; no password is stored in this app.
 function showAuthModal(){
+ if(cloud.captchaWidget!==null&&window.turnstile){try{window.turnstile.remove(cloud.captchaWidget);}catch{}}
+ cloud.captchaWidget=null;cloud.captchaToken=null;
  if(cloud.user){if(!cloud.mfaReady)checkMFA();else setPage('account');return;}
  const heading=cloud.authMode==='register'?'Create your Trend Studio account':'Welcome back';
  openModal(`<div class="auth-dialog"><div class="auth-icon">✦</div><button class="modal-x" type="button" data-cloud="close-modal" aria-label="Close">×</button>
@@ -121,12 +128,18 @@ function showAuthModal(){
  ${configured?`<form id="cloud-auth-form"><label>Email address</label><input class="field wide" type="email" name="email" autocomplete="email" required placeholder="you@example.com" maxlength="254">
  <label>Password</label><input class="field wide" type="password" name="password" autocomplete="${cloud.authMode==='register'?'new-password':'current-password'}" required minlength="12" placeholder="At least 12 characters">
  ${cloud.authMode==='register'?`<label>Confirm password</label><input class="field wide" type="password" name="confirm" autocomplete="new-password" required minlength="12"></input>`:''}
+ ${captchaEnabled?`<label>Spam protection</label><div id="cloud-turnstile" aria-label="Bot verification"></div>`:''}
  <button class="btn btn-primary wide" type="submit" ${cloud.busy?'disabled':''}>${cloud.authMode==='register'?'Create account':'Log in'} →</button></form>
  <div class="modal-center"><span>or</span></div><button class="btn btn-outline wide" data-cloud="google-login" ${cloud.busy?'disabled':''}>Continue with Google</button>
  <p class="cloud-note">${html(cloud.syncInfo)}</p><button class="panel-link" data-cloud="mode">${cloud.authMode==='register'?'Already registered? Sign in':'New here? Register'}</button>
  <button class="panel-link" data-cloud="reset">Forgot password?</button>`:
  `<p class="settings-note">Account registration is not live yet. An administrator must add a Supabase project URL and publishable key to config.js and configure authentication.</p>`}
  </div>`);
+ if(captchaEnabled){
+  const loadChallenge=()=>{const target=document.getElementById('cloud-turnstile');if(!target||!window.turnstile||cloud.captchaWidget!==null)return;
+   cloud.captchaWidget=window.turnstile.render(target,{sitekey:cfg.turnstileSiteKey,callback:(token)=>{cloud.captchaToken=token;},'expired-callback':()=>{cloud.captchaToken=null;},'error-callback':()=>{cloud.captchaToken=null;}});};
+  loadChallenge();if(!window.turnstile){const script=document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]');script?.addEventListener('load',loadChallenge,{once:true});}
+ }
 }
 async function checkMFA(){
  if(!cloud.sb||!cloud.user||cloud.mfaChecking)return;
