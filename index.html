@@ -46,6 +46,16 @@
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.75.0/dist/umd/supabase.js"></script>
 <script async defer src="https://accounts.google.com/gsi/client"></script>
 <script async defer src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"></script>
+<style>
+.creator-setup{max-width:570px}
+.creator-setup .creator-topic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:3px 0 10px}
+.creator-topic{display:flex;align-items:center;gap:8px;border:1px solid #37445b;background:#1a2539;padding:11px;border-radius:10px;cursor:pointer;font-size:13px!important;margin:0!important}
+.creator-topic input,.creator-tick input{width:16px;height:16px;accent-color:#a990ff}
+.creator-tick{display:flex;align-items:center;gap:9px;line-height:1.35;cursor:pointer}
+.creator-setup form>label:not(.creator-tick){margin-top:9px}
+.creator-setup .field{min-height:43px}
+@media(max-width:490px){.creator-setup .creator-topic-grid{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
 <div id="app">
