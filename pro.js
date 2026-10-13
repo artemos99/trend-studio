@@ -179,7 +179,7 @@ async function loadOwnDaily(force){
 }
 const sumKey=(rows,index)=>rows.reduce((a,r)=>a+(Number(r[index])||0),0);
 function ownAnalyticsView(){
- const channel=api()?.ownChannel(),videos=api()?.ownVideos()||[];
+ const channel=api()?.ownChannel(),videos=api()?.ownVideos()||[],publicTotals=api()?.publicChannels()?.[channel?.id]?.statistics;
  const rows=ownDaily?.rows||[],total=sumKey(rows,1),minutes=sumKey(rows,2),gain=sumKey(rows,3),loss=sumKey(rows,4);
  const likes=sumKey(rows,6),comments=sumKey(rows,7),shares=sumKey(rows,8);
  const avg=total?rows.reduce((acc,r)=>acc+(Number(r[1])||0)*(Number(r[5])||0),0)/total:0;
@@ -190,6 +190,7 @@ function ownAnalyticsView(){
  (!channel?'<div class="panel pro-searchbox"><h3>Connect your YouTube channel</h3><p>Authorize YouTube read-only access from the YouTube connection tab to see real analytics.</p><button class="btn btn-primary" data-go="youtube">▶ Connect YouTube</button></div>':
  '<div class="panel pro-searchbox"><div class="pro-row-between"><div><h3>'+esc(channel.title)+'</h3><p>Last analytics refresh '+when(ownAt)+' · Recent data may be delayed by YouTube.</p></div><span class="tag green">Owner-authorized report</span></div>'+
  (ownError?'<p class="pro-error">'+esc(ownError)+' — check the YouTube Analytics API authorization.</p>':"")+
+ '<div class="pro-stats4"><div><small>Current public subscribers</small><strong>'+(publicTotals?.hiddenSubscriberCount?"Hidden":publicTotals?.subscriberCount!=null?compact(publicTotals.subscriberCount):"—")+'</strong></div><div><small>Lifetime public channel views</small><strong>'+(publicTotals?.viewCount!=null?compact(publicTotals.viewCount):"—")+'</strong></div><div><small>Published video count</small><strong>'+(publicTotals?.videoCount!=null?compact(publicTotals.videoCount):"—")+'</strong></div><div><small>Uploads indexed here</small><strong>'+number(videos.length)+'</strong></div></div>'+ 
  '<div class="pro-stats4"><div><small>Views · 28 days</small><strong>'+(rows.length?number(total):"—")+'</strong></div>'+
  '<div><small>Watch hours · 28 days</small><strong>'+(rows.length?number(Math.round(minutes/60)):"—")+'</strong></div>'+
  '<div><small>Subscribers gained</small><strong>'+(rows.length?number(gain):"—")+'</strong></div>'+
