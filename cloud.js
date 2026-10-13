@@ -398,13 +398,14 @@ async function loadOwnVideos(){
   const result=await ytRequest('/youtube/v3/videos',{part:'snippet,contentDetails,statistics',id:ids.slice(i,i+50).join(','),maxResults:50});
   all.push(...(result.items||[]));
  }
- yt.ownVideos=all;
+ yt.ownVideos=all;yt.ownRefreshedAt=Date.now();
 }
 function parseDuration(iso){const m=String(iso||'').match(/P(?:([\d.]+)D)?T?(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?/);return m?Number(m[1]||0)*86400+Number(m[2]||0)*3600+Number(m[3]||0)*60+Number(m[4]||0):0;}
 function toRadarVideo(v,channel,handle){return {id:v.id,title:v.snippet?.title||'Untitled',channel,channelHandle:handle,views:Number(v.statistics?.viewCount)||0,likes:Number(v.statistics?.likeCount)||0,duration:parseDuration(v.contentDetails?.duration),channelId:v.snippet?.channelId||'',thumbnailUrl:v.snippet?.thumbnails?.medium?.url||'',comments:Number(v.statistics?.commentCount)||0,publishedAt:v.snippet?.publishedAt||new Date().toISOString(),emoji:'🎬',source:'youtube'};}
-async function scanLive(){if(yt.scanning)return;if(!canRead()){toast('Connect YouTube first to load real public metrics.');setPage('youtube');return;}
+async function scanLive(opts={}){if(yt.scanning)return;if(!canRead()){if(!opts.background){toast('Connect YouTube first to load real public metrics.');setPage('youtube');}return;}
+ const background=opts.background===true;let succeeded=false;
  yt.scanning=true;const status=document.getElementById('yt-activity');if(status)status.textContent='Scanning…';let all=[],errs=[];
- try{if(!yt.ownVideos.length)await loadOwnVideos();if(yt.channel)all.push(...yt.ownVideos.map(x=>toRadarVideo(x,yt.channel.title,'@'+yt.channel.id)));
+ try{if(!yt.ownVideos.length||Date.now()-(yt.ownRefreshedAt||0)>30*60000)await loadOwnVideos();if(yt.channel)all.push(...yt.ownVideos.map(x=>toRadarVideo(x,yt.channel.title,'@'+yt.channel.id)));
  const list=state.channels.filter(c=>c.role==='competitor').slice(0,8);
  for(let n=0;n<list.length;n++){const c=list[n];if(!canRead())throw Error('Google access expired. Reconnect YouTube.');
  const handle=c.handle;try{
@@ -417,10 +418,10 @@ async function scanLive(){if(yt.scanning)return;if(!canRead()){toast('Connect Yo
  }catch(e){errs.push(handle+': '+e.message);}
  const progress=document.getElementById('yt-activity');if(progress)progress.textContent=`Scanned ${n+1}/${list.length} competitors`;
  }
- if(all.length){state.videos=normalizeVideos(all);state.scannedAt=todayString();setMode('live');}
+ state.videos=normalizeVideos(all);state.scannedAt=todayString();setMode('live');succeeded=true;
  yt.scanReport=`${all.length} real videos indexed. ${errs.length?'Some channels failed: '+errs.join('; '):'Scan complete.'}`;
- toast(yt.scanReport);setPage('radar');
- }catch(e){toast('YouTube scan: '+e.message)}finally{yt.scanning=false;render();window.TrendPro?.onScanDone?.();}
+ if(!background){toast(yt.scanReport);setPage('radar');}
+ }catch(e){if(!background)toast('YouTube scan: '+e.message)}finally{yt.scanning=false;render();if(succeeded)window.TrendPro?.onScanDone?.();}
 }
 function youtubePage(){return header('Connect your <span class="title-accent">YouTube channel.</span>','Read your own uploads and retention charts. Compare public competitor metrics. This version has no channel write or upload permissions.','GOOGLE & YOUTUBE')+
  `<div class="settings-grid"><div class="panel settings-block"><h3>${yt.channel?'✓ '+html(yt.channel.title):'Connect Google / YouTube'}</h3><p>${yt.channel?`Channel ID: <code>${html(yt.channel.id)}</code>`:'Choose the Google account that manages YOUR channel. You will authorize read-only YouTube and Analytics access; login alone never grants these permissions.'}</p>
@@ -573,7 +574,7 @@ window.TrendBridge=Object.freeze({
  publicChannels:()=>({...yt.channelStats}),
  accountReady:()=>Boolean(cloud.user&&cloud.mfaReady),
  creatorProfile:()=>creatorProfile?{...creatorProfile}:null,
- scan:()=>scanLive(),
+ scan:(background=false)=>scanLive({background:Boolean(background)}),
  searchChannels:async(q)=>{
   if(!canRead())throw Error('Connect YouTube to search channels.');
   const term=String(q||'').trim().slice(0,100);
