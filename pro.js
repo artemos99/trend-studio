@@ -181,6 +181,7 @@ const sumKey=(rows,index)=>rows.reduce((a,r)=>a+(Number(r[index])||0),0);
 function ownAnalyticsView(){
  const channel=api()?.ownChannel(),videos=api()?.ownVideos()||[],publicTotals=api()?.publicChannels()?.[channel?.id]?.statistics;
  const rows=ownDaily?.rows||[],total=sumKey(rows,1),minutes=sumKey(rows,2),gain=sumKey(rows,3),loss=sumKey(rows,4);
+ const engagementAvailable=Boolean(rows.length&&rows[0].length>=9);
  const likes=sumKey(rows,6),comments=sumKey(rows,7),shares=sumKey(rows,8);
  const avg=total?rows.reduce((acc,r)=>acc+(Number(r[1])||0)*(Number(r[5])||0),0)/total:0;
  const breakdown=(report,label)=>(report?.rows||[]).slice(0,9).map(x=>'<div class="pro-breakdown-row"><span>'+esc(String(x[0]).replaceAll("_"," "))+'</span><b>'+compact(x[1])+' views</b></div>').join("")||'<p class="pro-helper">Not available for this channel or report.</p>';
@@ -195,9 +196,9 @@ function ownAnalyticsView(){
  '<div><small>Watch hours · 28 days</small><strong>'+(rows.length?number(Math.round(minutes/60)):"—")+'</strong></div>'+
  '<div><small>Subscribers gained</small><strong>'+(rows.length?number(gain):"—")+'</strong></div>'+
  '<div><small>Subscribers lost</small><strong>'+(rows.length?number(loss):"—")+'</strong></div></div>'+
- '<div class="pro-stats4 pro-engagement"><div><small>Likes · 28 days</small><strong>'+(rows.length?compact(likes):"—")+'</strong></div>'+
- '<div><small>Comments · 28 days</small><strong>'+(rows.length?compact(comments):"—")+'</strong></div>'+
- '<div><small>Shares · 28 days</small><strong>'+(rows.length?compact(shares):"—")+'</strong></div>'+
+ '<div class="pro-stats4 pro-engagement"><div><small>Likes · 28 days</small><strong>'+(engagementAvailable?compact(likes):"—")+'</strong></div>'+
+ '<div><small>Comments · 28 days</small><strong>'+(engagementAvailable?compact(comments):"—")+'</strong></div>'+
+ '<div><small>Shares · 28 days</small><strong>'+(engagementAvailable?compact(shares):"—")+'</strong></div>'+
  '<div><small>Avg. view duration</small><strong>'+(rows.length?Math.floor(avg/60)+":"+String(Math.round(avg%60)).padStart(2,"0"):"—")+'</strong></div></div>'+
  '<div class="pro-chart"><div class="pro-row-between"><b>Daily video views · last 28 days</b><small>Official YouTube Analytics</small></div>'+
  (series.length?'<div class="pro-bars">'+series.map(x=>'<div title="'+esc(x[0])+': '+number(x[1])+' views" style="height:'+Math.max(3,Number(x[1])/max*100)+'%"></div>').join("")+'</div>':'<p>No daily report yet. Click Refresh to request it.</p>')+'</div><div class="pro-breakdown"><section><h4>Top audience countries</h4>'+breakdown(ownGeo,"countries")+'</section>'+
