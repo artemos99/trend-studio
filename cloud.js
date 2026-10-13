@@ -55,7 +55,7 @@ const me=document.getElementById('nav');
 me.insertAdjacentHTML('beforeend',`<div class="nav-section">CONNECTED SERVICES</div>
  <button class="nav-link" data-page="youtube"><span>▶</span> YouTube connection <em>NEW</em></button>
  <button class="nav-link" data-page="account"><span>☻</span> My account <em>NEW</em></button>`);
-document.querySelector('.workspace-switch small').textContent='Kids & family · Cloud-ready';
+document.querySelector('.workspace-switch small').textContent='Creator intelligence · Live YouTube';
 document.getElementById('refresh-btn').disabled=false;
 document.getElementById('refresh-btn').textContent='Connect YouTube';
 document.querySelector('.top-actions').insertAdjacentHTML('beforeend',`<button class="btn btn-outline" id="cloud-account-top" data-cloud="open-auth">Guest account</button>`);
@@ -420,7 +420,7 @@ async function scanLive(){if(yt.scanning)return;if(!canRead()){toast('Connect Yo
  if(all.length){state.videos=normalizeVideos(all);state.scannedAt=todayString();setMode('live');}
  yt.scanReport=`${all.length} real videos indexed. ${errs.length?'Some channels failed: '+errs.join('; '):'Scan complete.'}`;
  toast(yt.scanReport);setPage('radar');
- }catch(e){toast('YouTube scan: '+e.message)}finally{yt.scanning=false;render();}
+ }catch(e){toast('YouTube scan: '+e.message)}finally{yt.scanning=false;render();window.TrendPro?.onScanDone?.();}
 }
 function youtubePage(){return header('Connect your <span class="title-accent">YouTube channel.</span>','Read your own uploads and retention charts. Compare public competitor metrics. This version has no channel write or upload permissions.','GOOGLE & YOUTUBE')+
  `<div class="settings-grid"><div class="panel settings-block"><h3>${yt.channel?'✓ '+html(yt.channel.title):'Connect Google / YouTube'}</h3><p>${yt.channel?`Channel ID: <code>${html(yt.channel.id)}</code>`:'Choose the Google account that manages YOUR channel. You will authorize read-only YouTube and Analytics access; login alone never grants these permissions.'}</p>
@@ -600,7 +600,13 @@ window.TrendBridge=Object.freeze({
  ownDaily:async(days)=>{
   if(!yt.channel||!canRead())throw Error('Connect YouTube first.');
   const now=Date.now(),end=new Date(now-3*86400000).toISOString().slice(0,10),start=new Date(now-(Math.min(90,Math.max(7,Number(days)||28))+2)*86400000).toISOString().slice(0,10);
-  return googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({ids:'channel==MINE',startDate:start,endDate:end,metrics:'views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration',dimensions:'day',sort:'day'}));
+  return googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({ids:'channel==MINE',startDate:start,endDate:end,metrics:'views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration,likes,comments,shares',dimensions:'day',sort:'day'}));
+ },
+ ownBreakdown:async(dimension)=>{
+  if(!yt.channel||!canRead())throw Error('Connect your channel first.');
+  if(!['country','insightTrafficSourceType'].includes(dimension))throw Error('Invalid breakdown');
+  const now=Date.now(),end=new Date(now-3*86400000).toISOString().slice(0,10),start=new Date(now-30*86400000).toISOString().slice(0,10);
+  return googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({ids:'channel==MINE',startDate:start,endDate:end,metrics:'views,estimatedMinutesWatched',dimensions:dimension,sort:'-views',maxResults:12}));
  }
 });
 initCloud();render();
