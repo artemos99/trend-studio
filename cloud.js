@@ -58,12 +58,92 @@ document.querySelector('.workspace-switch small').textContent='Kids & family · 
 document.getElementById('refresh-btn').disabled=false;
 document.getElementById('refresh-btn').textContent='Connect YouTube';
 document.querySelector('.top-actions').insertAdjacentHTML('beforeend',`<button class="btn btn-outline" id="cloud-account-top" data-cloud="open-auth">Guest account</button>`);
-function payload(){return {channels:state.channels,ideas:state.ideas,keywords:state.keywords,days:state.days};}
-function applyPayload(data){const d=data||{};
+
+const NICHE_PRESETS={
+ kids:{label:'Kids & family',topics:['Color challenge','Hide and seek','Mystery box','Escape room','School stories','24 hour challenge','Food challenge'],competitors:[['@LikeNastyaofficial','Like Nastya'],['@VladandNiki','Vlad and Niki'],['@KidsDianaShow','Kids Diana Show'],['@aforadley','A for Adley'],['@NinjaKidzTV','Ninja Kidz TV']]},
+ gaming:{label:'Gaming & Roblox',topics:['Roblox','Minecraft','Game update','Funny gaming moments','Gaming competition','Speedrun'],competitors:[['@Flamingo','Flamingo'],['@KreekCraft','KreekCraft'],['@MrBeastGaming','MrBeast Gaming'],['@ItsFunneh','ItsFunneh']]},
+ challenges:{label:'Challenges & entertainment',topics:['Last to leave','24 hour challenge','Mystery challenge','Escape room','Team competitions','Social experiment'],competitors:[['@MrBeast','MrBeast'],['@StokesTwins','Stokes Twins'],['@BenAzelart','Ben Azelart'],['@Airrack','Airrack']]},
+ lifestyle:{label:'Vlogs & lifestyle',topics:['Day in my life','Travel vlog','Life transformation','Budget challenge','Morning routine','Family vlog'],competitors:[['@EmmaChamberlain','Emma Chamberlain'],['@RyanTrahan','Ryan Trahan'],['@CaseyNeistat','Casey Neistat']]},
+ tech:{label:'Tech & reviews',topics:['Phone review','New gadgets','AI tools','Tech comparison','Budget tech','Unboxing'],competitors:[['@mkbhd','MKBHD'],['@LinusTechTips','Linus Tech Tips'],['@Mrwhosetheboss','Mrwhosetheboss']]},
+ education:{label:'Education & tutorials',topics:['How to tutorial','Science experiments','Explained simply','Learning tips','Myth busting'],competitors:[['@veritasium','Veritasium'],['@MarkRober','Mark Rober'],['@kurzgesagt','Kurzgesagt']]},
+ food:{label:'Food & cooking',topics:['Easy recipe','Food challenge','Taste test','Budget cooking','Restaurant food'],competitors:[['@NickDiGiovanni','Nick DiGiovanni'],['@JoshuaWeissman','Joshua Weissman'],['@GordonRamsay','Gordon Ramsay']]},
+ custom:{label:'Other / custom',topics:['Trending videos','Viral challenge','How to tutorial','Product review','YouTube Shorts'],competitors:[]}
+};
+let creatorProfile=null;
+function nichePreset(id){return NICHE_PRESETS[id]||NICHE_PRESETS.kids;}
+function cleanProfile(raw){
+ if(!raw||raw.completed!==true)return null;
+ const niche=Object.prototype.hasOwnProperty.call(NICHE_PRESETS,raw.niche)?raw.niche:'kids';
+ const preset=nichePreset(niche);
+ let topics=Array.isArray(raw.topics)?raw.topics.filter(t=>preset.topics.includes(t)).slice(0,8):[];
+ if(!topics.length)topics=preset.topics.slice(0,3);
+ return {completed:true,niche:niche,topics:topics,
+ language:String(raw.language||'English').slice(0,50),goal:String(raw.goal||'Find trends').slice(0,60),
+ channelId:/^UC[\w-]{22}$/.test(String(raw.channelId||''))?raw.channelId:'',
+ channelTitle:String(raw.channelTitle||'').slice(0,130)};
+}
+function applyCreatorTopics(){
+ if(!creatorProfile)return;
+ const topics=creatorProfile.topics.map(function(name){
+  return {name:name,query:name+' '+nichePreset(creatorProfile.niche).label+' youtube',
+   icon:'✦',desc:'Personalized topic: '+name,words:[name.toLowerCase(),...name.toLowerCase().split(' ').filter(w=>w.length>3)]};
+ });
+ TOPICS.splice(0,TOPICS.length,...topics);
+ if(state.videos.length)state.videos=normalizeVideos(state.videos);
+}
+function setupTopics(niche,selected){
+ return nichePreset(niche).topics.map(function(topic){
+  return '<label class="creator-topic"><input type="checkbox" name="topics" value="'+html(topic)+'" '+(selected.includes(topic)?'checked':'')+'><span>'+html(topic)+'</span></label>';
+ }).join('');
+}
+function optionList(values,current){
+ return values.map(function(v){return '<option value="'+html(v)+'" '+(v===current?'selected':'')+'>'+html(v)+'</option>';}).join('');
+}
+function showCreatorSetup(){
+ if(!cloud.user||!cloud.mfaReady)return toast('Verify your account before personalizing.');
+ const prof=creatorProfile||{niche:'kids',language:'English',goal:'Find trends',topics:nichePreset('kids').topics.slice(0,3)};
+ const niches=Object.keys(NICHE_PRESETS).map(function(id){
+  return '<option value="'+id+'" '+(prof.niche===id?'selected':'')+'>'+html(nichePreset(id).label)+'</option>';
+ }).join('');
+ const htmlForm='<div class="auth-dialog creator-setup"><button class="modal-x" type="button" data-cloud="close-modal" aria-label="Close">×</button>'+
+ '<div class="eyebrow">YOUR CREATOR PROFILE</div><h2>Make Trend Studio yours.</h2><p>Customize trends, recommendations and competitors. You can change this anytime.</p>'+
+ '<form id="creator-profile-form"><label>Content niche</label><select class="field wide" id="creator-niche" name="niche">'+niches+'</select>'+
+ '<label>Channel language</label><select class="field wide" name="language">'+optionList(['English','Español','Русский','Português','Français','Deutsch','Other'],prof.language)+'</select>'+
+ '<label>Main goal</label><select class="field wide" name="goal">'+optionList(['Find trends','Research competitors','Grow channel','Plan content','Make compilations'],prof.goal)+'</select>'+
+ '<label>Choose topics</label><div class="creator-topic-grid" id="creator-topic-grid">'+setupTopics(prof.niche,prof.topics)+'</div>'+
+ '<label class="creator-tick"><input type="checkbox" name="suggestCompetitors" checked> Add recommended competitor channels for this niche</label>'+
+ '<button type="submit" class="btn btn-primary wide">Save personalized workspace →</button></form>'+
+ '<p class="cloud-note">Saved privately to your account. YouTube connection is optional and always needs your permission.</p></div>';
+ openModal(htmlForm);
+}
+function saveCreatorProfile(form){
+ const data=new FormData(form),niche=String(data.get('niche')||'kids'),preset=nichePreset(niche);
+ const topics=data.getAll('topics').map(String).filter(t=>preset.topics.includes(t));
+ if(!topics.length)return toast('Select at least one topic.');
+ const old=creatorProfile;
+ creatorProfile=cleanProfile({completed:true,niche:niche,topics:topics,language:data.get('language'),goal:data.get('goal'),
+  channelId:old?.channelId||'',channelTitle:old?.channelTitle||''});
+ if(data.has('suggestCompetitors'))state.channels=preset.competitors.map(function(c){return {handle:c[0],name:c[1],role:'competitor'};});
+ applyCreatorTopics();
+ state.keywords=creatorProfile.topics.map(t=>t+' '+preset.label);
+ if(state.mode!=='live')state.videos=[];
+ cloud.lastSaved='';persist();saveCloud();closeModal();setPage('youtube');
+ toast('Preferences saved. Connect YouTube to see real videos and thumbnails.');
+}
+function creatorSummary(){
+ if(!creatorProfile)return '<p class="cloud-note">Not set up yet. Add your interests to personalize trends and competitors.</p>';
+ return '<p><b>'+html(nichePreset(creatorProfile.niche).label)+'</b> · '+html(creatorProfile.language)+' · '+html(creatorProfile.goal)+'</p>'+
+ '<p>'+creatorProfile.topics.map(x=>'<span class="tag">'+html(x)+'</span>').join(' ')+'</p>'+
+ '<p class="cloud-note">Saved channel: '+html(creatorProfile.channelTitle||'Not connected yet')+'. Your YouTube access is reauthorized separately.</p>';
+}
+
+function payload(){return {channels:state.channels,ideas:state.ideas,keywords:state.keywords,days:state.days,profile:creatorProfile};}
+function applyPayload(data){const d=data||{};creatorProfile=cleanProfile(d.profile);
  state.channels=Array.isArray(d.channels)?d.channels.slice(0,10).filter(c=>c&&typeof c==='object'&&typeof c.handle==='string'&&typeof c.name==='string'&&['my','competitor'].includes(c.role)).map(c=>({handle:String(c.handle).slice(0,128),name:String(c.name).slice(0,128),role:c.role})):DEFAULT_CHANNELS.map(x=>({...x}));
  state.ideas=Array.isArray(d.ideas)?d.ideas.slice(0,1000).filter(i=>i&&typeof i==='object').map(i=>({id:String(i.id||'').slice(0,100),title:String(i.title||'').slice(0,300),description:String(i.description||'').slice(0,6000),topic:String(i.topic||'').slice(0,120),status:['Idea','Scripting','Ready to film','Published'].includes(i.status)?i.status:'Idea',updated:Number(i.updated)||Date.now(),sourceId:String(i.sourceId||'').slice(0,120)})):[];
  state.keywords=Array.isArray(d.keywords)?d.keywords.slice(0,15).filter(k=>typeof k==='string').map(k=>k.slice(0,160)):TOPICS.map(t=>t.query);
  state.days=[7,14,30,60,90].includes(Number(d.days))?Number(d.days):30;
+ if(creatorProfile)applyCreatorTopics();
 }
 function badge(){const x=document.getElementById('cloud-account-top');if(x)x.textContent=cloud.user?`☻ ${cloud.user.email?.split('@')[0]||'Account'}`:'☻ Sign in';
  const y=document.getElementById('sidebar-mode');if(!y)return;
@@ -112,7 +192,7 @@ async function loadCloud(){if(!cloud.user||!cloud.sb||!cloud.mfaReady)return;con
  if(data?.workspace){applyPayload(data.workspace);cloud.lastSaved=JSON.stringify(payload());cloud.syncInfo='✓ Workspace loaded — synced across devices';}
  else {applyPayload(null);cloud.lastSaved='';cloud.syncInfo='New account ready — your cloud workspace is empty';}cloud.canWrite=true;
  }catch(e){cloud.syncInfo='Workspace loading failed: '+e.message;toast(cloud.syncInfo)}
- finally{cloud.loading=false;render();}
+ finally{cloud.loading=false;render();if(cloud.user?.id===uid&&cloud.mfaReady&&cloud.canWrite&&!creatorProfile)showCreatorSetup();}
 }
 async function initCloud(){if(!configured){cloud.syncInfo='Guest mode · Configure Supabase to enable accounts';badge();return;}
  if(!/^https:\/\/[^/]+\.supabase\.co\/?$/.test(cfg.supabaseUrl)){cloud.syncInfo='Invalid Supabase URL in config.js';return;}
