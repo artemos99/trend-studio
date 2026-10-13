@@ -32,7 +32,7 @@ function addWatchlist(info){
  state.channels.push({handle:handle.startsWith("@")?handle:info.id,name:title,role:"competitor",channelId:info.id,avatar:img});
  if(info.statistics){const old=api()?.publicChannels()||{};/* live results read from scan after adding */}
  suggestions=[];state.warnings=[];render();toastPro(title+" added. Loading actual uploads…");
- if(ok())api().scan();
+ if(ok())api().scan(true);
 }
 function showSuggestions(){
  const host=document.getElementById("pro-suggest");
@@ -243,7 +243,7 @@ function startRefresh(){
  if(document.hidden||!ok()||autoRefreshBusy)return;
  if(Date.now()-publicAt<15*60000)return;
  autoRefreshBusy=true;
- api().scan().then(()=>{publicAt=Date.now();rememberPublicSnapshot();if(state.page==="recommended")loadPopular(false);if(state.page==="analytics")loadOwnDaily(false);})
+ api().scan(true).then(()=>{if(state.page==="recommended")loadPopular(false);if(state.page==="analytics")loadOwnDaily(false);})
  .catch(e=>toastPro(e.message)).finally(()=>{autoRefreshBusy=false;});
 }
 setInterval(startRefresh,15*60000);
@@ -255,7 +255,7 @@ document.addEventListener("click",e=>{
  if(b.dataset.proAdd!==undefined){const c=suggestions[Number(b.dataset.proAdd)];if(c)addWatchlist(c);return;}
  if(b.dataset.proRemove!==undefined){const idx=Number(b.dataset.proRemove);if(idx>=0&&idx<state.channels.length){state.channels.splice(idx,1);render();toastPro("Channel removed.");}return;}
  if(b.dataset.proRecommend){const c=popular.find(x=>x.id===b.dataset.proRecommend)?.info;if(c)addWatchlist(c);return;}
- if(b.dataset.proRefresh==="watchlist"){if(!ok())return toastPro("Reconnect YouTube.");api().scan().then(()=>{publicAt=Date.now();rememberPublicSnapshot();}).catch(e=>toastPro(e.message));return;}
+ if(b.dataset.proRefresh==="watchlist"){if(!ok())return toastPro("Reconnect YouTube.");api().scan(true).catch(e=>toastPro(e.message));return;}
  if(b.dataset.proRefresh==="popular"){loadPopular(true);return;}
  if(b.dataset.proRefresh==="analytics"){loadOwnDaily(true);return;}
 });
