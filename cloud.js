@@ -605,7 +605,13 @@ window.TrendBridge=Object.freeze({
  ownDaily:async(days)=>{
   if(!yt.channel||!canRead())throw Error('Connect YouTube first.');
   const now=Date.now(),end=new Date(now-3*86400000).toISOString().slice(0,10),start=new Date(now-(Math.min(90,Math.max(7,Number(days)||28))+2)*86400000).toISOString().slice(0,10);
-  return googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({ids:'channel==MINE',startDate:start,endDate:end,metrics:'views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration,likes,comments,shares',dimensions:'day',sort:'day'}));
+  const base={ids:'channel==MINE',startDate:start,endDate:end,dimensions:'day',sort:'day'};
+  try{return await googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({...base,metrics:'views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration,likes,comments,shares'}));}
+  catch(firstError){
+   // Core report remains available if an optional engagement metric is unsupported.
+   try{return await googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({...base,metrics:'views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration'}));}
+   catch{throw firstError;}
+  }
  },
  ownBreakdown:async(dimension)=>{
   if(!yt.channel||!canRead())throw Error('Connect your channel first.');
