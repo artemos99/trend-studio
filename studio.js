@@ -30,7 +30,7 @@ function findTheme(){
  if(!source()?.connected())return toast("Connect your YouTube channel first.");
  const own=source().ownVideos();
  if(!own.length)return toast("No channel uploads found yet. Reconnect YouTube to refresh your videos.");
- W.theme=theme;W.found=true;W.selected.clear();W.curves.clear();W.errors.clear();W.reviewed=false;
+ W.theme=theme;comp.theme=theme;W.found=true;W.selected.clear();W.curves.clear();W.errors.clear();W.reviewed=false;
  const words=theme.toLowerCase().split(/\s+/).filter(x=>x.length>1);
  const results=own.map(v=>{
   const sn=v.snippet||{},title=String(sn.title||"").toLowerCase(),description=String(sn.description||"").toLowerCase();
@@ -45,7 +45,7 @@ async function analyze(){
  const videos=chosen();
  if(!videos.length)return toast("Choose at least one video.");
  if(videos.length>8)return toast("Choose up to 8 videos for one compilation.");
- W.step=2;W.analyzing=true;W.curves.clear();W.errors.clear();render();
+ comp.theme=W.theme;W.step=2;W.analyzing=true;W.curves.clear();W.errors.clear();render();
  for(const v of videos){
   try{
    const points=await source().ownRetention(v.id);
@@ -61,7 +61,7 @@ function pointsChart(v){
  if(!rows.length)return '<p class="studio-note">No private retention points available. You can still include this video, but its cuts need manual review.</p>';
  const max=Math.max(1,...rows.map(x=>x.ratio));
  const bars=rows.filter((_,i)=>i%Math.max(1,Math.ceil(rows.length/45))===0).slice(0,46);
- const peaks=compPeaks({id:v.id,rows,duration:Math.max(1,duration(v))}).slice(0,4);
+ const peaks=compPeaks({id:v.id,rows,duration:Math.max(1,duration(v))}).slice(0,14);
  return '<div class="studio-peaks"><div class="studio-retention-chart" aria-label="Actual audience retention by video position">'+bars.map(p=>'<span title="'+pct(p.ratio)+'% watch ratio at '+Math.round(p.pos*100)+'% of video" style="height:'+Math.max(3,p.ratio/max*100)+'%"></span>').join("")+'</div>'+
  '<div class="studio-note">Watch-ratio curve from YouTube Analytics. Peaks are local retention highs, not proof of rewatches.</div>'+
  '<div class="studio-peak-list">'+(peaks.length?peaks.map(p=>'<a target="_blank" rel="noopener noreferrer" href="https://www.youtube.com/watch?v='+v.id+'&t='+Math.floor(p.start)+'s">▶ '+compSec(p.start)+'–'+compSec(p.end)+' · '+pct(p.value)+'% watch ratio ↗</a>').join(""):'No clear peaks; review manually.')+'</div></div>';
@@ -184,6 +184,10 @@ function resizeClip(id,key,val){
  else {if(n>file.duration||n<clip.start+.5)return toast("End must be within the file, after start.");clip.end=n;}
  compResultClear();W.reviewed=false;render();
 }
+document.addEventListener("click",e=>{
+ const b=e.target.closest("button");if(!b)return;
+ if(b.dataset.compMove!==undefined||b.dataset.compRemoveClip!==undefined)W.reviewed=false;
+},true);
 document.addEventListener("click",e=>{
  const b=e.target.closest("button");if(!b)return;
  if(b.dataset.studioFind!==undefined){findTheme();return;}
