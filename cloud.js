@@ -141,7 +141,7 @@ function creatorSummary(){
 
 function payload(){return {channels:state.channels,ideas:state.ideas,keywords:state.keywords,days:state.days,profile:creatorProfile};}
 function applyPayload(data){const d=data||{};creatorProfile=cleanProfile(d.profile);
- state.channels=Array.isArray(d.channels)?d.channels.slice(0,10).filter(c=>c&&typeof c==='object'&&typeof c.handle==='string'&&typeof c.name==='string'&&['my','competitor'].includes(c.role)).map(c=>({handle:String(c.handle).slice(0,128),name:String(c.name).slice(0,128),role:c.role})):DEFAULT_CHANNELS.map(x=>({...x}));
+ state.channels=Array.isArray(d.channels)?d.channels.slice(0,10).filter(c=>c&&typeof c==='object'&&typeof c.handle==='string'&&typeof c.name==='string'&&['my','competitor'].includes(c.role)).map(c=>({handle:String(c.handle).slice(0,128),name:String(c.name).slice(0,128),role:c.role,channelId:/^UC[\w-]{22}$/.test(String(c.channelId||''))?c.channelId:'',avatar:String(c.avatar||'').slice(0,400)})):DEFAULT_CHANNELS.map(x=>({...x}));
  state.ideas=Array.isArray(d.ideas)?d.ideas.slice(0,1000).filter(i=>i&&typeof i==='object').map(i=>({id:String(i.id||'').slice(0,100),title:String(i.title||'').slice(0,300),description:String(i.description||'').slice(0,6000),topic:String(i.topic||'').slice(0,120),status:['Idea','Scripting','Ready to film','Published'].includes(i.status)?i.status:'Idea',updated:Number(i.updated)||Date.now(),sourceId:String(i.sourceId||'').slice(0,120)})):[];
  state.keywords=Array.isArray(d.keywords)?d.keywords.slice(0,15).filter(k=>typeof k==='string').map(k=>k.slice(0,160)):TOPICS.map(t=>t.query);
  state.days=[7,14,30,60,90].includes(Number(d.days))?Number(d.days):30;
@@ -385,10 +385,20 @@ async function googleFetch(url,opt={},token=yt.token){if(!token)throw Error('You
  if(!r.ok)throw Error(data.error?.message||data.message||`Google returned ${r.status}`);return data;}
 async function ytRequest(path,params={}){if(!canRead())throw Error('YouTube access expired; reconnect your Google account.');
  const q=new URLSearchParams(params);return googleFetch('https://www.googleapis.com'+path+'?'+q.toString());}
-async function loadOwnVideos(){if(!yt.channel?.uploads)return;
- const items=(await ytRequest('/youtube/v3/playlistItems',{part:'contentDetails',playlistId:yt.channel.uploads,maxResults:50})).items||[];
- if(!items.length){yt.ownVideos=[];return;}
- yt.ownVideos=(await ytRequest('/youtube/v3/videos',{part:'snippet,contentDetails,statistics',id:items.map(x=>x.contentDetails.videoId).join(','),maxResults:50})).items||[];
+async function loadOwnVideos(){
+ if(!yt.channel?.uploads)return;
+ const ids=[];let page;
+ for(let i=0;i<5;i++){
+  const data=await ytRequest('/youtube/v3/playlistItems',{part:'contentDetails',playlistId:yt.channel.uploads,maxResults:50,...(page?{pageToken:page}:{})});
+  ids.push(...(data.items||[]).map(v=>v.contentDetails?.videoId).filter(Boolean));
+  page=data.nextPageToken;if(!page)break;
+ }
+ const all=[];
+ for(let i=0;i<ids.length;i+=50){
+  const result=await ytRequest('/youtube/v3/videos',{part:'snippet,contentDetails,statistics',id:ids.slice(i,i+50).join(','),maxResults:50});
+  all.push(...(result.items||[]));
+ }
+ yt.ownVideos=all;
 }
 function parseDuration(iso){const m=String(iso||'').match(/P(?:([\d.]+)D)?T?(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?/);return m?Number(m[1]||0)*86400+Number(m[2]||0)*3600+Number(m[3]||0)*60+Number(m[4]||0):0;}
 function toRadarVideo(v,channel,handle){return {id:v.id,title:v.snippet?.title||'Untitled',channel,channelHandle:handle,views:Number(v.statistics?.viewCount)||0,likes:Number(v.statistics?.likeCount)||0,duration:parseDuration(v.contentDetails?.duration),channelId:v.snippet?.channelId||'',thumbnailUrl:v.snippet?.thumbnails?.medium?.url||'',comments:Number(v.statistics?.commentCount)||0,publishedAt:v.snippet?.publishedAt||new Date().toISOString(),emoji:'🎬',source:'youtube'};}
@@ -398,8 +408,8 @@ async function scanLive(){if(yt.scanning)return;if(!canRead()){toast('Connect Yo
  const list=state.channels.filter(c=>c.role==='competitor').slice(0,8);
  for(let n=0;n<list.length;n++){const c=list[n];if(!canRead())throw Error('Google access expired. Reconnect YouTube.');
  const handle=c.handle;try{
- const info=await ytRequest('/youtube/v3/channels',{part:'snippet,contentDetails,statistics',...(handle.startsWith('UC')?{id:handle}:{forHandle:handle})});
- const item=info.items?.[0],pid=item?.contentDetails?.relatedPlaylists?.uploads;if(item)yt.channelStats[item.id]=item;if(!pid){errs.push(handle+' not found');continue;}
+ const info=await ytRequest('/youtube/v3/channels',{part:'snippet,contentDetails,statistics',...(c.channelId?{id:c.channelId}:handle.startsWith('UC')?{id:handle}:{forHandle:handle})});
+ const item=info.items?.[0],pid=item?.contentDetails?.relatedPlaylists?.uploads;if(item){yt.channelStats[item.id]=item;c.channelId=item.id;c.name=item.snippet.title;c.avatar=item.snippet.thumbnails?.default?.url||'';}if(!pid){errs.push(handle+' not found');continue;}
  const pubs=(await ytRequest('/youtube/v3/playlistItems',{part:'contentDetails',playlistId:pid,maxResults:20})).items||[];
  if(!pubs.length)continue;
  const videos=(await ytRequest('/youtube/v3/videos',{part:'snippet,statistics,contentDetails',id:pubs.map(x=>x.contentDetails.videoId).join(',')})).items||[];
@@ -556,5 +566,42 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
  if(type==='retention'){const src=b.dataset.sourceId;const id=document.querySelector(`[data-yt-vid="${CSS.escape(src)}"]`)?.value;if(!id)return toast('Select a matching YouTube video first.');fetchRetention(src,id);}
 });
 const refresh=document.getElementById('refresh-btn');refresh.addEventListener('click',()=>{if(!yt.channel)setPage('youtube');},true);
+window.TrendBridge=Object.freeze({
+ connected:()=>canRead(),
+ ownChannel:()=>yt.channel?{...yt.channel}:null,
+ ownVideos:()=>yt.ownVideos.slice(),
+ publicChannels:()=>({...yt.channelStats}),
+ accountReady:()=>Boolean(cloud.user&&cloud.mfaReady),
+ creatorProfile:()=>creatorProfile?{...creatorProfile}:null,
+ scan:()=>scanLive(),
+ searchChannels:async(q)=>{
+  if(!canRead())throw Error('Connect YouTube to search channels.');
+  const term=String(q||'').trim().slice(0,100);
+  if(term.length<3)throw Error('Enter at least 3 characters.');
+  return (await ytRequest('/youtube/v3/search',{part:'snippet',type:'channel',q:term,maxResults:8})).items||[];
+ },
+ channels:async(ids)=>{
+  const clean=[...new Set(ids)].filter(x=>/^UC[\w-]{22}$/.test(x)).slice(0,50);
+  if(!clean.length)return[];
+  return (await ytRequest('/youtube/v3/channels',{part:'snippet,statistics,contentDetails',id:clean.join(',')})).items||[];
+ },
+ recentPopular:async(region)=>{
+  const allowed=['US','GB','CA','BR','IN','MX','DE','AU'];
+  return (await ytRequest('/youtube/v3/videos',{part:'snippet,statistics,contentDetails',chart:'mostPopular',regionCode:allowed.includes(region)?region:'US',maxResults:50})).items||[];
+ },
+ ownRetention:async(id)=>{
+  if(!yt.ownVideos.some(v=>v.id===id))throw Error('Select one of your channel videos.');
+  if(!canRead())throw Error('Reconnect YouTube.');
+  const end=new Date(Date.now()-3*86400000).toISOString().slice(0,10);
+  const q={ids:'channel==MINE',startDate:'2010-01-01',endDate:end,metrics:'audienceWatchRatio',dimensions:'elapsedVideoTimeRatio',filters:'video=='+id,sort:'elapsedVideoTimeRatio'};
+  const data=await googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams(q));
+  return (data.rows||[]).map(r=>({pos:Number(r[0]),ratio:Number(r[1])})).filter(x=>Number.isFinite(x.pos)&&Number.isFinite(x.ratio)&&x.pos>=0&&x.pos<=1);
+ },
+ ownDaily:async(days)=>{
+  if(!yt.channel||!canRead())throw Error('Connect YouTube first.');
+  const now=Date.now(),end=new Date(now-3*86400000).toISOString().slice(0,10),start=new Date(now-(Math.min(90,Math.max(7,Number(days)||28))+2)*86400000).toISOString().slice(0,10);
+  return googleFetch('https://youtubeanalytics.googleapis.com/v2/reports?'+new URLSearchParams({ids:'channel==MINE',startDate:start,endDate:end,metrics:'views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration',dimensions:'day',sort:'day'}));
+ }
+});
 initCloud();render();
 })();
