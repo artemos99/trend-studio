@@ -98,7 +98,21 @@ async function authSubmit(form){if(!cloud.sb)return toast('Configure Supabase fi
  else{cloud.syncInfo='First sign-in successful. Complete 2FA to unlock your workspace.';if(result.data.session)await checkMFA();}
  }catch(e){cloud.syncInfo='Sign-in error: '+e.message;}finally{cloud.busy=false;cloud.captchaToken=null;render();if(!cloud.user)showAuthModal();}
 }
-async function accountAction(action){if(action==='open-auth'){cloud.authMode=cloud.user?'login':'register';if(cloud.user){setPage('account');if(!cloud.mfaReady)checkMFA();}else showAuthModal();return;}
+async function accountAction(action){if(action==='regenerate-mfa'){
+  if(!cloud.sb||!cloud.user||!cloud.mfaFactor||!cloud.mfaEnrollment)return toast('No unfinished setup to regenerate.');
+  if(cloud.busy)return;
+  cloud.busy=true;
+  try{
+   const {error}=await cloud.sb.auth.mfa.unenroll({factorId:cloud.mfaFactor});
+   if(error)throw error;
+   cloud.mfaFactor=null;cloud.mfaEnrollment=null;
+   await enrollMFA();
+   toast('New authenticator setup key generated. Keep it private.');
+  }catch(e){toast('Could not reset authenticator setup: '+e.message)}
+  finally{cloud.busy=false;}
+  return;
+ }
+ if(action==='open-auth'){cloud.authMode=cloud.user?'login':'register';if(cloud.user){setPage('account');if(!cloud.mfaReady)checkMFA();}else showAuthModal();return;}
  if(action==='resume-mfa'){await checkMFA();return;}
  if(action==='mode'){cloud.authMode=cloud.authMode==='login'?'register':'login';showAuthModal();return;}
  if(action==='google-login'){if(!cloud.sb)return toast('Configure Supabase first.');
@@ -174,7 +188,8 @@ async function enrollMFA(){
  const qrSafe=/^data:image\/svg\+xml(?:;charset=[\w-]+)?;base64,[A-Za-z0-9+/=]+$/.test(qr)?qr:'';
  openModal(`<div class="auth-dialog"><div class="auth-icon">🔐</div><h2>Protect your account</h2><p>Scan this QR code in Google Authenticator, Microsoft Authenticator, or 1Password.</p>
  ${qrSafe?`<img class="mfa-qr" src="${html(qrSafe)}" alt="Authenticator setup QR code">`:'<p class="settings-note">Use the setup key below in your authenticator app.</p>'}
- <label>Manual setup key (keep private)</label><code class="mfa-secret">${html(t?.secret||'')}</code>
+ <details style="margin-top:12px"><summary style="cursor:pointer;color:#baaaff;font-weight:bold">Show manual setup key (keep private)</summary><code class="mfa-secret">${html(t?.secret||'')}</code></details>
+ <button class="btn btn-outline wide" type="button" data-cloud="regenerate-mfa" style="margin-top:12px">↻ Regenerate setup key</button>
  <form id="mfa-verify-form"><label>Six-digit authenticator code</label><input class="field wide" name="code" required pattern="[0-9]{6}" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
  <button class="btn btn-primary wide" type="submit">Verify and secure account →</button></form>
  <p class="cloud-note">Your cloud workspace is locked until 2FA succeeds. If you lose your authenticator, account recovery requires administrator help; Supabase does not provide backup codes.</p>
