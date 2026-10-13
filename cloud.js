@@ -47,6 +47,7 @@ function rememberChoice(){
 }
 const cloud={sb:null,user:null,loading:false,busy:false,lastSaved:'',timer:null,inFlight:false,setupError:'',syncInfo:'Guest — local only',authMode:'register',recovery:false,canWrite:false,mfaReady:false,mfaFactor:null,mfaEnrollment:null,mfaChecking:false,captchaToken:null,captchaWidget:null};
 const yt={token:null,readExpires:0,channel:null,ownVideos:[],scanning:false,loadingRetention:false,channelStats:{},detailBusy:false};
+yt.choices=[];
 const READ_SCOPES='https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
 const guestData=(()=>{try{return JSON.parse(localStorage.getItem(STORAGE)||'{}')}catch{return {}}})();
 const oldBanner=banner,oldRadar=radar,oldComp=compStage;
@@ -352,14 +353,29 @@ function askGoogle(scope,callback){if(!googleConfigured)return toast('Add your G
  callback:r=>{if(r.error||!r.access_token){toast('Google authorization failed: '+(r.error||'No token'));return;}callback(r);}});
  client.requestAccessToken({prompt:'consent'});
 }
+async function finishYouTubeConnection(mine){
+ if(!mine)return toast('Choose a channel first.');
+ if(creatorProfile?.channelId&&creatorProfile.channelId!==mine.id){
+  if(!confirm('Switch from '+creatorProfile.channelTitle+' to '+mine.snippet.title+'?'))return;
+ }
+ yt.channel={id:mine.id,title:mine.snippet.title,uploads:mine.contentDetails?.relatedPlaylists?.uploads};
+ yt.channelStats[mine.id]=mine;yt.ownVideos=[];
+ try{
+  await loadOwnVideos();
+  if(creatorProfile){creatorProfile.channelId=mine.id;creatorProfile.channelTitle=mine.snippet.title;persist();}
+  yt.choices=[];closeModal();toast('Connected to '+yt.channel.title+'. Scanning videos and competitors…');
+  setPage('youtube');await scanLive();
+ }catch(e){toast('YouTube connection: '+e.message);render();}
+}
 function connectYouTube(){askGoogle(READ_SCOPES,async r=>{
  yt.token=r.access_token;yt.readExpires=Date.now()+Math.max(100,(Number(r.expires_in)||3600)-90)*1000;
- try{const result=await ytRequest('/youtube/v3/channels',{part:'snippet,contentDetails,statistics',mine:'true'});
- const mine=result.items?.[0];if(!mine)throw Error('No YouTube channel was found for this Google account. Choose a Google or Brand Account that manages a YouTube channel.');
- if(creatorProfile?.channelId&&creatorProfile.channelId!==mine.id){if(!confirm('This is a different channel from your previously connected one ('+creatorProfile.channelTitle+'). Switch your creator profile to '+mine.snippet.title+'?')){yt.token=null;return;}}
- yt.channel={id:mine.id,title:mine.snippet.title,uploads:mine.contentDetails?.relatedPlaylists?.uploads};yt.channelStats[mine.id]=mine;await loadOwnVideos();
- if(creatorProfile){creatorProfile.channelId=mine.id;creatorProfile.channelTitle=mine.snippet.title;persist();}
- toast('Connected to '+yt.channel.title+'. Scanning videos and competitors…');setPage('youtube');await scanLive();
+ try{
+  const result=await ytRequest('/youtube/v3/channels',{part:'snippet,contentDetails,statistics',mine:'true',maxResults:50});
+  yt.choices=result.items||[];
+  if(!yt.choices.length)throw Error('No channel found. Choose a Google or Brand Account that manages your YouTube channel.');
+  if(yt.choices.length===1){await finishYouTubeConnection(yt.choices[0]);return;}
+  openModal('<div class="auth-dialog"><h2>Choose a YouTube channel</h2><p>Which channel do you want to analyze?</p>'+
+   yt.choices.map((c,i)=>'<button type="button" class="btn btn-outline wide" style="margin:6px 0;display:block" data-youtube="select-channel" data-channel-index="'+i+'">'+html(c.snippet?.title||c.id)+'</button>').join('')+'</div>');
  }catch(e){toast('YouTube connection: '+e.message);render();}
  });}
 function canRead(){return Boolean(yt.token&&Date.now()<yt.readExpires);}
@@ -535,6 +551,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
  const type=b.dataset.youtube;if(!type)return;
  if(type==='connect')connectYouTube();
  if(type==='scan')scanLive();
+ if(type==='select-channel'){const ix=Number(b.dataset.channelIndex);if(Number.isInteger(ix)&&ix>=0&&ix<(yt.choices||[]).length)finishYouTubeConnection(yt.choices[ix]);}
  if(type==='disconnect'){const tok=yt.token;yt.token=null;yt.readExpires=0;yt.channel=null;yt.ownVideos=[];yt.channelStats={};state.videos=makeDemo();setMode('demo');yt.scanReport='Disconnected';render();if(tok&&window.google?.accounts?.oauth2?.revoke)google.accounts.oauth2.revoke(tok,()=>{});toast('YouTube disconnected; Google permission revocation requested.');}
  if(type==='retention'){const src=b.dataset.sourceId;const id=document.querySelector(`[data-yt-vid="${CSS.escape(src)}"]`)?.value;if(!id)return toast('Select a matching YouTube video first.');fetchRetention(src,id);}
 });
