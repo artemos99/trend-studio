@@ -354,7 +354,7 @@ function showAuthenticatorSetup(){
  const factor=cloud.mfaEnrollment;
  if(!factor)return toast('Start authenticator setup again.');
  const qr=String(factor.qr_code||'');
- const image=/^data:image\/svg\+xml(?:;charset=[\w-]+)?;base64,[A-Za-z0-9+/=]+$/.test(qr)?qr:'';
+ const image=/^data:image\/svg\+xml(?:;charset=[\w-]+)?;(?:base64,[A-Za-z0-9+/=]+|utf8,[^"'<>\r\n]{1,45000})$/i.test(qr)&&qr.length<50000?qr:'';
  openModal('<div class="auth-dialog"><div class="auth-icon">🔐</div><h2>Set up an authenticator app</h2>'+
  '<p>Scan the QR code with Google Authenticator, Microsoft Authenticator, 1Password, or another TOTP app. Enter its six-digit code to finish setup.</p>'+
  (image?'<img class="mfa-qr" src="'+html(image)+'" alt="Private authenticator enrollment QR code">':
