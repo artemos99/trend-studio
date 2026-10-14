@@ -10,7 +10,7 @@ const ROOT=path.resolve(__dirname,'..');
 const SCRIPT_NAMES=['app.js','cloud.js','pro.js','discovery.js'];
 const SRC=SCRIPT_NAMES.map(name=>fs.readFileSync(path.join(ROOT,name),'utf8')).join('\n');
 
-function boot(){
+function boot(options={}){
  const events=new Map(),windowEvents=new Map(),elements=new Map(),messages=[];
  const store=()=>{const data=new Map();return{
   getItem(key){return data.has(key)?data.get(key):null;},
@@ -43,7 +43,7 @@ function boot(){
  };
  const context=vm.createContext({
   window,document,localStorage,sessionStorage,
-  setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},
+  setTimeout(callback,delay){if(options.fastSearch&&delay===800)queueMicrotask(callback);return 1;},clearTimeout(){},setInterval(){return 1;},
   Event:class{constructor(type){this.type=type;}},
   location:{origin:'https://example.test',pathname:'/'},
   crypto:{randomUUID(){return 'test-'+Date.now();}},
@@ -63,10 +63,11 @@ function boot(){
   fire('change',{id,dataset,value,matches(){return false;},...other});
  };
  const html=()=>el('page-root').innerHTML;
+ const input=(id,value)=>fire('input',{id,value,dataset:{}});
  const flush=async()=>{
   for(let i=0;i<12;i++)await Promise.resolve();
  };
- return{evaluate,click,change,html,el,window,document,flush,messages};
+ return{evaluate,click,change,input,html,el,window,document,flush,messages};
 }
 
 test('every tab renders with all browser modules loaded together',()=>{
@@ -168,4 +169,84 @@ test('preference reset and metadata basics stay type-safe',()=>{
  assert.equal(app.evaluate("matchTopic('Pink vs Blue Challenge')"),'Color vs Color');
  assert.equal(app.evaluate("normalizeVideos([{title:'Pink vs Black Challenge',channel:'Creator',views:1000,publishedAt:new Date().toISOString()}]).length"),1);
  assert.equal(app.evaluate("TOPICS.some(t=>t.name==='Mystery Box')"),true);
+});
+
+
+test('watchlist autocomplete resolves real channels, displays logos and avoids duplicates',async()=>{
+ const app=boot({fastSearch:true});
+ const channelId='UC1234567890123456789012';
+ const channel={id:channelId,snippet:{title:'Testing Channel',customUrl:'@TestingChannel',
+  thumbnails:{default:{url:'https://yt3.ggpht.com/test.jpg'}}},
+  statistics:{subscriberCount:'350000',viewCount:'10000000',videoCount:'80'}};
+ let scans=0;
+ app.window.TrendBridge={
+  connected(){return true;},publicChannels(){return{[channelId]:channel};},
+  async searchChannels(q){assert.equal(q,'Testing Channel');return [{id:{channelId}}];},
+  async channels(ids){assert.deepEqual([...ids],[channelId]);return [channel];},
+  scan(){scans++;return Promise.resolve();},
+  ownChannel(){return null;},ownVideos(){return [];}
+ };
+ app.evaluate('setPage("competitors")');
+ app.input('new-channel','Testing Channel');
+ await app.flush();
+ assert.match(app.el('pro-suggest').innerHTML,/Testing Channel/);
+ assert.match(app.el('pro-suggest').innerHTML,/yt3\.ggpht\.com/);
+ const before=app.evaluate('state.channels.length');
+ app.click({proAdd:'0'});
+ assert.equal(app.evaluate('state.channels.length'),before+1);
+ assert.match(app.html(),/Testing Channel/);
+ assert.ok(scans>=1);
+ app.click({proAdd:'0'});
+ assert.equal(app.evaluate('state.channels.length'),before+1);
+});
+
+test('connected analytics and recommended channels render real API responses',async()=>{
+ const app=boot();
+ const channelId='UC1234567890123456789012',uploadId='abcdefghijk';
+ const channel={
+  id:channelId,snippet:{title:'Creator Channel',customUrl:'@creator',
+   thumbnails:{default:{url:'https://yt3.ggpht.com/test.jpg'}}},
+  statistics:{subscriberCount:'250000',viewCount:'9000000',videoCount:'90'}
+ };
+ const api={
+  connected(){return true;},ownChannel(){return{id:channelId,title:'My Creator Channel'};},
+  ownVideos(){return[{id:uploadId,snippet:{title:'My Newest Challenge',publishedAt:'2026-10-01'},
+    statistics:{viewCount:'500000',likeCount:'20000'}}];},
+  publicChannels(){return{[channelId]:channel};},
+  async ownDaily(){return{rows:[['2026-10-08',123,456,10,2,60,18,7,3]]};},
+  async ownBreakdown(dimension){return{rows:dimension==='country'?[['US',100,200]]:[['YT_SEARCH',80,100]]};},
+  async recentPopular(){return[{id:uploadId,snippet:{channelId,title:'My Newest Challenge'},statistics:{viewCount:'500000'}}];},
+  async channels(){return[channel];},
+  scan(){return Promise.resolve();}
+ };
+ app.window.TrendBridge=api;
+ app.evaluate('setPage("analytics")');
+ await app.flush();
+ assert.match(app.html(),/My Creator Channel/);
+ assert.match(app.html(),/500K views|500K/);
+ assert.match(app.html(),/Top audience countries/);
+ assert.match(app.html(),/US/);
+ assert.match(app.html(),/YT SEARCH/);
+ assert.match(app.html(),/My Newest Challenge/);
+ app.evaluate('setPage("recommended")');
+ await app.flush();
+ assert.match(app.html(),/Creator Channel/);
+ assert.match(app.html(),/Most-popular|popular videos/i);
+});
+
+test('topic links open matching global searches, and exports remain available',async()=>{
+ const app=boot(),queries=[];
+ app.window.TrendBridge={
+  connected(){return true;},creatorProfile(){return {topics:['color challenge']};},
+  async searchGlobalVideos(term){queries.push(term);return{videos:[],nextPageToken:null};},
+  ownChannel(){return null;},ownVideos(){return [];},publicChannels(){return {};}
+ };
+ app.evaluate('setPage("topics")');
+ app.click({viewTopic:'Color vs Color'});
+ await app.flush();
+ assert.equal(app.evaluate('state.page'),'radar');
+ assert.equal(queries.at(-1),'Color vs Color');
+ app.click({action:'export'});
+ app.click({action:'export-videos'});
+ assert.equal(app.evaluate('state.page'),'radar');
 });
