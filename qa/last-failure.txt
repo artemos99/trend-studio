@@ -1,0 +1,74 @@
+TAP version 13
+# Subtest: every tab renders with all browser modules loaded together
+not ok 1 - every tab renders with all browser modules loaded together
+  ---
+  duration_ms: 53.505441
+  type: 'test'
+  location: '/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:72:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /channel analytics/i. Input:
+    
+    '<div class="page-header"><div><div class="eyebrow">FIRST-PARTY PERFORMANCE</div><h1 class="page-title">Your channel <span class="title-accent">analytics.</span></h1><p class="page-subtitle">Authorized YouTube Analytics reports plus public statistics for your own uploads.</p></div><button class="btn btn-outline" data-pro-refresh="analytics" disabled>↻ Refresh report</button></div><div class="panel pro-searchbox"><h3>Connect your YouTube channel</h3><p>Authorize YouTube read-only access from the YouTube connection tab to see real analytics.</p><button class="btn btn-primary" data-go="youtube">▶ Connect YouTube</button></div>'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: '<div class="page-header"><div><div class="eyebrow">FIRST-PARTY PERFORMANCE</div><h1 class="page-title">Your channel <span class="title-accent">analytics.</span></h1><p class="page-subtitle">Authorized YouTube Analytics reports plus public statistics for your own uploads.</p></div><button class="btn btn-outline" data-pro-refresh="analytics" disabled>↻ Refresh report</button></div><div class="panel pro-searchbox"><h3>Connect your YouTube channel</h3><p>Authorize YouTube read-only access from the YouTube connection tab to see real analytics.</p><button class="btn btn-primary" data-go="youtube">▶ Connect YouTube</button></div>'
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:82:9)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: idea generation, production status and navigation are functional
+ok 2 - idea generation, production status and navigation are functional
+  ---
+  duration_ms: 6.030138
+  type: 'test'
+  ...
+# Subtest: worldwide Radar ranks relevant video metadata and filters video format
+ok 3 - worldwide Radar ranks relevant video metadata and filters video format
+  ---
+  duration_ms: 10.554941
+  type: 'test'
+  ...
+# Subtest: Radar analysis, saved ideas and account switch never crash
+not ok 4 - Radar analysis, saved ideas and account switch never crash
+  ---
+  duration_ms: 8.323816
+  type: 'test'
+  location: '/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:141:1'
+  failureType: 'testCodeFailure'
+  error: 'api(...)?.ownChannel is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    ownAnalyticsView (trend-studio-integrated.js:1376:23)
+    render (trend-studio-integrated.js:1410:78)
+    setPage (trend-studio-integrated.js:1418:2)
+    setPage (trend-studio-integrated.js:1816:12)
+    evalmachine.<anonymous>:1:1
+    Script.runInContext (node:vm:149:12)
+    Object.runInContext (node:vm:301:6)
+    Object.evaluate (/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:54:30)
+    TestContext.<anonymous> (/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:160:6)
+    async Test.run (node:internal/test_runner/test:1054:7)
+  ...
+# Subtest: preference reset and metadata basics stay type-safe
+ok 5 - preference reset and metadata basics stay type-safe
+  ---
+  duration_ms: 3.529215
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 3
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 138.535349
