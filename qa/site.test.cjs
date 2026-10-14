@@ -37,7 +37,7 @@ function boot(options={}){
   addEventListener(type,fn){if(!events.has(type))events.set(type,[]);events.get(type).push(fn);}
  };
  const window={
-  localStorage,sessionStorage,TREND_CONFIG:{},supabase:null,scrollTo(){},
+  localStorage,sessionStorage,TREND_CONFIG:options.config||{},supabase:options.supabase||null,scrollTo(){},
   addEventListener(type,fn){if(!windowEvents.has(type))windowEvents.set(type,[]);windowEvents.get(type).push(fn);},
   dispatchEvent(event){for(const fn of windowEvents.get(event.type)||[])fn(event);}
  };
@@ -249,4 +249,67 @@ test('topic links open matching global searches, and exports remain available',a
  app.click({action:'export'});
  app.click({action:'export-videos'});
  assert.equal(app.evaluate('state.page'),'radar');
+});
+
+
+test('signed-in accounts receive MFA choices without bypassing 2FA',async()=>{
+ const session={access_token:'header.'+
+  Buffer.from(JSON.stringify({session_id:'11111111-1111-1111-1111-111111111111'})).toString('base64url')+
+  '.signature',user:{id:'user-1',email:'creator@example.com'}};
+ let otpSends=0;
+ const auth={
+  onAuthStateChange(){return{data:{subscription:{unsubscribe(){}}}};},
+  async getSession(){return{data:{session},error:null};},
+  mfa:{
+   async getAuthenticatorAssuranceLevel(){return{data:{currentLevel:'aal1'},error:null};},
+   async listFactors(){return{data:{all:[{id:'f1',factor_type:'totp',status:'verified'}],
+    totp:[{id:'f1',factor_type:'totp',status:'verified'}]},error:null};}
+  },
+  async signInWithOtp(){otpSends++;return{error:null};}
+ };
+ const client={auth,functions:{async invoke(){return{data:{verified:false},error:null};}}};
+ const app=boot({config:{supabaseUrl:'https://example.supabase.co',supabasePublishableKey:'test-public-key'},
+  supabase:{createClient(){return client;}}});
+ await app.flush();
+ assert.match(app.el('modal-root').innerHTML,/email-factor-form/);
+ assert.match(app.el('modal-root').innerHTML,/use-authenticator/);
+ assert.ok(otpSends>=1);
+ assert.equal(app.evaluate('state.page'),'overview');
+ app.click({cloud:'use-authenticator'});
+ await app.flush();
+ assert.match(app.el('modal-root').innerHTML,/totp-factor-form/);
+ assert.match(app.el('modal-root').innerHTML,/Use email code instead/);
+ app.click({cloud:'use-email-factor'});
+ assert.match(app.el('modal-root').innerHTML,/email-factor-form/);
+ app.evaluate('setPage("account")');
+ assert.match(app.html(),/Two-factor verification needed/);
+});
+
+test('verified authenticator unlocks only the owner’s cloud workspace',async()=>{
+ const session={access_token:'header.'+
+  Buffer.from(JSON.stringify({session_id:'11111111-1111-1111-1111-111111111111'})).toString('base64url')+
+  '.signature',user:{id:'user-1',email:'creator@example.com'}};
+ const workspace={channels:[],ideas:[{id:'idea-1',title:'My protected idea',status:'Idea',topic:'Gaming'}],
+  keywords:['Roblox Challenge'],days:30,profile:{completed:true,niche:'gaming',topics:['Roblox'],language:'English',goal:'Grow channel'}};
+ let loaded=0;
+ const sb={
+  auth:{
+   onAuthStateChange(){},
+   async getSession(){return{data:{session},error:null};},
+   mfa:{async getAuthenticatorAssuranceLevel(){return{data:{currentLevel:'aal2'},error:null};}}
+  },
+  from(name){assert.equal(name,'trend_studio_workspaces');return{select(){return{eq(key,id){
+   assert.equal(key,'user_id');assert.equal(id,'user-1');loaded++;
+   return{async maybeSingle(){return{data:{workspace},error:null};}};
+  }};}};}
+ };
+ const app=boot({config:{supabaseUrl:'https://example.supabase.co',supabasePublishableKey:'test-public-key'},
+  supabase:{createClient(){return sb;}}});
+ await app.flush();
+ app.evaluate('setPage("account")');
+ assert.match(app.html(),/Signed in securely/);
+ assert.ok(loaded>0,'Owner-only workspace query did not run');
+ assert.equal(app.evaluate('state.ideas[0].title'),'My protected idea');
+ assert.equal(app.evaluate('state.channels.length'),0,'Clean account should not import guest defaults');
+ assert.equal(app.evaluate('TOPICS.some(t=>t.name==="Roblox")'),true);
 });
