@@ -1,0 +1,86 @@
+TAP version 13
+# Subtest: every tab renders with all browser modules loaded together
+ok 1 - every tab renders with all browser modules loaded together
+  ---
+  duration_ms: 57.227901
+  type: 'test'
+  ...
+# Subtest: idea generation, production status and navigation are functional
+ok 2 - idea generation, production status and navigation are functional
+  ---
+  duration_ms: 6.364278
+  type: 'test'
+  ...
+# Subtest: worldwide Radar ranks relevant video metadata and filters video format
+ok 3 - worldwide Radar ranks relevant video metadata and filters video format
+  ---
+  duration_ms: 11.602816
+  type: 'test'
+  ...
+# Subtest: Radar analysis, saved ideas and account switch never crash
+ok 4 - Radar analysis, saved ideas and account switch never crash
+  ---
+  duration_ms: 8.580437
+  type: 'test'
+  ...
+# Subtest: preference reset and metadata basics stay type-safe
+ok 5 - preference reset and metadata basics stay type-safe
+  ---
+  duration_ms: 3.902553
+  type: 'test'
+  ...
+# Subtest: watchlist autocomplete resolves real channels, displays logos and avoids duplicates
+ok 6 - watchlist autocomplete resolves real channels, displays logos and avoids duplicates
+  ---
+  duration_ms: 6.413928
+  type: 'test'
+  ...
+# Subtest: connected analytics and recommended channels render real API responses
+ok 7 - connected analytics and recommended channels render real API responses
+  ---
+  duration_ms: 7.11072
+  type: 'test'
+  ...
+# Subtest: topic links open matching global searches, and exports remain available
+ok 8 - topic links open matching global searches, and exports remain available
+  ---
+  duration_ms: 6.273906
+  type: 'test'
+  ...
+# Subtest: signed-in accounts receive MFA choices without bypassing 2FA
+not ok 9 - signed-in accounts receive MFA choices without bypassing 2FA
+  ---
+  duration_ms: 10.281727
+  type: 'test'
+  location: '/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:255:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+    
+      assert.ok(otpSends>=1)
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/runner/work/trend-studio/trend-studio/qa/site.test.cjs:276:9)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: verified authenticator unlocks only the owner’s cloud workspace
+ok 10 - verified authenticator unlocks only the owner’s cloud workspace
+  ---
+  duration_ms: 6.667372
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 9
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 193.133339
