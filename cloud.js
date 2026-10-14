@@ -70,6 +70,7 @@ const NICHE_PRESETS={
  food:{label:'Food & cooking',topics:['Easy recipe','Food challenge','Taste test','Budget cooking','Restaurant food'],competitors:[['@NickDiGiovanni','Nick DiGiovanni'],['@JoshuaWeissman','Joshua Weissman'],['@GordonRamsay','Gordon Ramsay']]},
  custom:{label:'Other / custom',topics:['Trending videos','Viral challenge','How to tutorial','Product review','YouTube Shorts'],competitors:[]}
 };
+const DEFAULT_TOPIC_PRESETS=TOPICS.map(t=>({...t,words:[...t.words]}));
 let creatorProfile=null;
 function nichePreset(id){return NICHE_PRESETS[id]||NICHE_PRESETS.kids;}
 function cleanProfile(raw){
@@ -84,7 +85,7 @@ function cleanProfile(raw){
  channelTitle:String(raw.channelTitle||'').slice(0,130)};
 }
 function applyCreatorTopics(){
- if(!creatorProfile)return;
+ if(!creatorProfile){TOPICS.splice(0,TOPICS.length,...DEFAULT_TOPIC_PRESETS.map(t=>({...t,words:[...t.words]})));return;}
  const topics=creatorProfile.topics.map(function(name){
   return {name:name,query:name+' '+nichePreset(creatorProfile.niche).label+' youtube',
    icon:'✦',desc:'Personalized topic: '+name,words:[name.toLowerCase(),...name.toLowerCase().split(' ').filter(w=>w.length>3)]};
@@ -128,7 +129,7 @@ function saveCreatorProfile(form){
  else if(!old)state.channels=[];
  applyCreatorTopics();
  state.keywords=creatorProfile.topics.map(t=>t+' '+preset.label);
- state.videos=[];state.mode='demo';
+ state.videos=[];setMode('demo');
  cloud.lastSaved='';persist();saveCloud();closeModal();setPage('youtube');
  if(canRead())scanLive();else toast('Preferences saved. Connect YouTube to see real videos and thumbnails.');
 }
@@ -140,12 +141,12 @@ function creatorSummary(){
 }
 
 function payload(){return {channels:state.channels,ideas:state.ideas,keywords:state.keywords,days:state.days,profile:creatorProfile};}
-function applyPayload(data){const d=data||{};creatorProfile=cleanProfile(d.profile);
+function applyPayload(data){const d=data||{};creatorProfile=cleanProfile(d.profile);applyCreatorTopics();
  state.channels=Array.isArray(d.channels)?d.channels.slice(0,10).filter(c=>c&&typeof c==='object'&&typeof c.handle==='string'&&typeof c.name==='string'&&['my','competitor'].includes(c.role)).map(c=>({handle:String(c.handle).slice(0,128),name:String(c.name).slice(0,128),role:c.role,channelId:/^UC[\w-]{22}$/.test(String(c.channelId||''))?c.channelId:'',avatar:String(c.avatar||'').slice(0,400)})):DEFAULT_CHANNELS.map(x=>({...x}));
  state.ideas=Array.isArray(d.ideas)?d.ideas.slice(0,1000).filter(i=>i&&typeof i==='object').map(i=>({id:String(i.id||'').slice(0,100),title:String(i.title||'').slice(0,300),description:String(i.description||'').slice(0,6000),topic:String(i.topic||'').slice(0,120),status:['Idea','Scripting','Ready to film','Published'].includes(i.status)?i.status:'Idea',updated:Number(i.updated)||Date.now(),sourceId:String(i.sourceId||'').slice(0,120)})):[];
  state.keywords=Array.isArray(d.keywords)?d.keywords.slice(0,15).filter(k=>typeof k==='string').map(k=>k.slice(0,160)):TOPICS.map(t=>t.query);
  state.days=[7,14,30,60,90].includes(Number(d.days))?Number(d.days):30;
- if(creatorProfile)applyCreatorTopics();
+ state.topic='All';if(state.videos.length)state.videos=normalizeVideos(state.videos);
 }
 function badge(){const x=document.getElementById('cloud-account-top');if(x)x.textContent=cloud.user?`☻ ${cloud.user.email?.split('@')[0]||'Account'}`:'☻ Sign in';
  const y=document.getElementById('sidebar-mode');if(!y)return;
@@ -205,6 +206,7 @@ async function initCloud(){if(!configured){cloud.syncInfo='Guest mode · Configu
  const prior=cloud.user?.id||null,next=session?.user||null;
  const sid=session?.access_token?emailPrimarySessionId(session.access_token):null;
  if((next?.id||null)!==prior||(next&&sid!==cloud.currentSessionId)){
+  if((next?.id||null)!==prior)window.dispatchEvent(new Event('trend-studio:account-changed'));
   cloud.user=next;cloud.currentSessionId=sid;cloud.canWrite=false;cloud.mfaReady=false;
   emailSentAt=0;emailStatus='';emailClient=null;clearTimeout(cloud.timer);
   if(next)queueMicrotask(()=>checkMFA());
@@ -241,7 +243,15 @@ async function accountAction(action){if(action==='resend-email-code'){await send
   }catch(e){cloud.syncInfo='Google sign-in failed: '+e.message;toast(cloud.syncInfo);render();}
   return;
  }
- if(action==='logout'){if(!cloud.sb)return;await cloud.sb.auth.signOut();cloud.mfaReady=false;cloud.mfaEnrollment=null;yt.token=null;yt.channel=null;yt.ownVideos=[];yt.channelStats={};state.videos=makeDemo();setMode('demo');cloud.user=null;cloud.syncInfo='Signed out; guest work remains local';applyPayload(guestData);render();return;}
+ if(action==='logout'){
+   if(!cloud.sb)return;
+   await cloud.sb.auth.signOut();
+   cloud.mfaReady=false;cloud.mfaEnrollment=null;cloud.mfaFactor=null;cloud.canWrite=false;
+   yt.token=null;yt.readExpires=0;yt.channel=null;yt.ownVideos=[];yt.channelStats={};yt.choices=[];yt.scanReport='';
+   cloud.user=null;cloud.lastSaved='';applyPayload(guestData);state.videos=makeDemo();setMode('demo');
+   cloud.syncInfo='Signed out; guest work remains local';
+   window.dispatchEvent(new Event('trend-studio:account-changed'));render();return;
+ }
  if(action==='reset'){if(!cloud.sb)return toast('Configure Supabase first');if(captchaEnabled&&!cloud.captchaToken)return toast('Complete the bot verification in the sign-in pop-up before requesting a password reset.');const email=prompt('Email address for your password reset:');if(!email)return;
  const {error}=await cloud.sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname,...(captchaEnabled?{captchaToken:cloud.captchaToken}:{})});
  if(captchaEnabled)showAuthModal();toast(error?'Error: '+error.message:'If this email has an account, check it for reset instructions.');return;}
@@ -672,7 +682,13 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
  if(type==='connect')connectYouTube();
  if(type==='scan')scanLive();
  if(type==='select-channel'){const ix=Number(b.dataset.channelIndex);if(Number.isInteger(ix)&&ix>=0&&ix<(yt.choices||[]).length)finishYouTubeConnection(yt.choices[ix]);}
- if(type==='disconnect'){const tok=yt.token;yt.token=null;yt.readExpires=0;yt.channel=null;yt.ownVideos=[];yt.channelStats={};state.videos=makeDemo();setMode('demo');yt.scanReport='Disconnected';render();if(tok&&window.google?.accounts?.oauth2?.revoke)google.accounts.oauth2.revoke(tok,()=>{});toast('YouTube disconnected; Google permission revocation requested.');}
+ if(type==='disconnect'){
+   const tok=yt.token;yt.token=null;yt.readExpires=0;yt.channel=null;yt.ownVideos=[];yt.channelStats={};yt.choices=[];
+   state.videos=makeDemo();setMode('demo');yt.scanReport='Disconnected';
+   window.dispatchEvent(new Event('trend-studio:youtube-disconnected'));render();
+   if(tok&&window.google?.accounts?.oauth2?.revoke)google.accounts.oauth2.revoke(tok,()=>{});
+   toast('YouTube disconnected; Google permission revocation requested.');
+  }
  if(type==='retention'){const src=b.dataset.sourceId;const id=document.querySelector(`[data-yt-vid="${CSS.escape(src)}"]`)?.value;if(!id)return toast('Select a matching YouTube video first.');fetchRetention(src,id);}
 });
 const refresh=document.getElementById('refresh-btn');refresh.addEventListener('click',()=>{if(!yt.channel)setPage('youtube');},true);
