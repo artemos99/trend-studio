@@ -44,6 +44,7 @@ function boot(options={}){
  const context=vm.createContext({
   window,document,localStorage,sessionStorage,
   setTimeout(callback,delay){if(options.fastSearch&&delay===800)queueMicrotask(callback);return 1;},clearTimeout(){},setInterval(){return 1;},
+  queueMicrotask(callback){queueMicrotask(callback);},
   Event:class{constructor(type){this.type=type;}},
   location:{origin:'https://example.test',pathname:'/'},
   crypto:{randomUUID(){return 'test-'+Date.now();}},
