@@ -7,7 +7,7 @@ const validId=x=>/^[A-Za-z0-9_-]{11}$/.test(String(x||""));
 const short=x=>Number(x||0).toLocaleString("en-US");
 const ago=x=>Math.max(1,(Date.now()-new Date(x||Date.now()).getTime())/86400000);
 const pct=(ratio)=>Math.round(Number(ratio||0)*100);
-const W={step:1,theme:"",results:[],selected:new Set(),curves:new Map(),errors:new Map(),searching:false,analyzing:false,found:false,reviewed:false,busyFile:false,sort:"relevance",showAll:false,previewId:null};
+const W={step:1,theme:"",results:[],selected:new Set(),curves:new Map(),errors:new Map(),searching:false,analyzing:false,found:false,reviewed:false,busyFile:false,sort:"relevance",showAll:false,previewId:null,previewClip:null};
 function localVideos(){
  return comp.sources.filter(f=>f.localOnly).map(f=>({
   id:f.youtubeId,snippet:{title:f.displayName||f.name,publishedAt:new Date().toISOString(),description:"",tags:[]},
@@ -117,10 +117,11 @@ function candidateRow(v){
  const st=stats(v),local=fileFor(v.id),err=W.errors.get(v.id);
  return '<article class="panel studio-upload-card"><div class="studio-upload-head">'+videoArt(v)+'<div><strong>'+h(v.snippet?.title)+'</strong>'+
  '<small>'+(v.local?'Local footage':short(st.views)+' views · '+short(Math.round(st.pace))+' views/day lifetime average')+'</small><small>'+compSec(duration(v))+' · '+(W.curves.get(v.id)?.length||0)+' actual retention points</small></div></div>'+
- (err?'<p class="studio-warning">Retention unavailable: '+h(err)+'</p>':"")+
+ (err&&!isLocal(v)?'<p class="studio-warning">Retention unavailable: '+h(err)+'</p>':"")+
  pointsChart(v)+
  '<div class="studio-source-file"><label class="comp-file-btn">'+(local?'✓ Replace original file':'↑ Attach matching original video file')+'<input type="file" accept="video/*,.mp4,.mov,.webm,.m4v" data-studio-upload="'+v.id+'"></label>'+
  (local?'<span class="tag green">✓ '+h(local.name)+' · '+compSec(local.duration)+'</span>':'<span class="studio-note">Required for cutting and exporting. YouTube streams cannot be downloaded by the app.</span>')+'</div>'+
+ (local?.durationMismatch?'<p class="studio-warning">Original: '+compSec(local.duration)+', YouTube upload: '+compSec(local.expectedDuration)+'. Automatic retention cuts disabled; use manual selection.</p>':'')+
  (local?'<button type="button" class="btn btn-outline studio-preview-btn" data-studio-preview-source="'+h(local.id)+'">▶ Preview original</button>':'')+
  (local&&W.previewId===local.id?'<video class="studio-source-preview" controls preload="metadata" src="'+h(previewURL(local))+'"></video>':'')+
  (local?'<div class="studio-manual"><label>Manual start (s)<input class="field" type="number" min="0" max="'+local.duration+'" step="0.5" data-studio-manual-start="'+v.id+'" value="'+Number(local.manualStart||0)+'"></label>'+
@@ -133,8 +134,10 @@ async function attachFile(id,file){
   const meta=await compLoadVideo(file);
   if(!(meta.duration>0))throw Error("Could not read the video's duration.");
   const previous=fileFor(id);
+  const expected=duration(video),accurate=isLocal(video)||!expected||Math.abs(meta.duration-expected)<=Math.max(2,expected*0.02);
   const entry={id:previous?.id||compId(),youtubeId:id,theme:comp.theme,name:file.name,file:file,duration:meta.duration,width:meta.width,height:meta.height,
-   rows:(W.curves.get(id)||[]),signal:W.curves.has(id)?"First-party retention imported":"No retention available",
+   rows:accurate?(W.curves.get(id)||[]):[],durationMismatch:!accurate,expectedDuration:expected,
+   signal:!accurate?"Duration mismatch — manual clips":W.curves.has(id)?"First-party retention imported":"No retention available",
    manualStart:previous?.manualStart||0,manualEnd:Math.min(previous?.manualEnd||12,meta.duration)};
   if(previous){if(previous.previewURL)URL.revokeObjectURL(previous.previewURL);comp.sources=comp.sources.filter(x=>x.id!==previous.id);}
   comp.sources.push(entry);
@@ -150,7 +153,7 @@ function buildTimeline(){
  comp.clips=[];compResultClear();
  const all=[];
  for(const v of attached){
-  const s=fileFor(v.id),ret=W.curves.get(v.id)||[];
+  const s=fileFor(v.id),ret=s.durationMismatch?[]:W.curves.get(v.id)||[];
   s.rows=ret;
   const peaks=compPeaks(s).slice(0,6),st=stats(v);
   if(peaks.length){
