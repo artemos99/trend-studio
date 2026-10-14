@@ -731,7 +731,7 @@ window.TrendBridge=Object.freeze({
      tags:Array.isArray(v.snippet?.tags)?v.snippet.tags.slice(0,50):[],
      channelId:v.snippet?.channelId||'',channel:v.snippet?.channelTitle||'',
      channelAvatar:ch?.snippet?.thumbnails?.default?.url||'',
-     subscriberCount:ch?.statistics?.hiddenSubscriberCount?null:Number(ch?.statistics?.subscriberCount??0),
+     subscriberCount:ch?.statistics?.hiddenSubscriberCount||ch?.statistics?.subscriberCount==null?null:Number(ch.statistics.subscriberCount),
      subscribersHidden:Boolean(ch?.statistics?.hiddenSubscriberCount),
      views:Number(v.statistics?.viewCount||0),likes:Number(v.statistics?.likeCount||0),
      comments:Number(v.statistics?.commentCount||0),
