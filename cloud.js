@@ -45,7 +45,7 @@ function rememberChoice(){
  return '<label class="checkline" style="margin:16px 0 5px;cursor:pointer"><input type="checkbox" data-remember-device '+(rememberDevice?'checked':'')+'> <span>Remember this device</span></label>'+
  '<p class="cloud-note" style="margin:5px 0 10px">Keep this browser signed in after verification. Use only on your private device. Signing out, revoking the session or clearing site data requires 2FA again.</p>';
 }
-const cloud={sb:null,user:null,loading:false,busy:false,lastSaved:'',timer:null,inFlight:false,setupError:'',syncInfo:'Guest — local only',authMode:'register',recovery:false,canWrite:false,mfaReady:false,mfaFactor:null,mfaEnrollment:null,mfaChecking:false,captchaToken:null,captchaWidget:null};
+const cloud={sb:null,user:null,loading:false,busy:false,lastSaved:'',timer:null,inFlight:false,setupError:'',syncInfo:'Guest — local only',authMode:'register',recovery:false,canWrite:false,mfaReady:false,mfaFactor:null,mfaEnrollment:null,mfaChecking:false,captchaToken:null,captchaWidget:null,currentSessionId:null};
 const yt={token:null,readExpires:0,channel:null,ownVideos:[],scanning:false,loadingRetention:false,channelStats:{},detailBusy:false};
 yt.choices=[];
 const READ_SCOPES='https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
@@ -171,7 +171,7 @@ function accountPage(){const msg=cloud.syncInfo;
  return header('Your <span class="title-accent">creator account.</span>','Sign in on any device to sync your Idea Vault, competitor watchlist, searches and production planner.','ACCOUNT & CLOUD')+
  `<div class="settings-grid"><div class="panel settings-block">
  ${cloud.user?`<h3>${cloud.mfaReady?'✓ Signed in securely':'🔐 Two-factor verification needed'}</h3><p><span class="tag green">${html(cloud.user.email||'Account')}</span></p><p>${html(msg)}</p><div class="settings-note">Changes to your ideas, keywords and competitor watchlist sync automatically between devices. Your actual video files stay on your computer.</div>
- ${!cloud.mfaReady?`<p class="cloud-note">Finish the authenticator-app verification before your synced projects become available.</p><button class="btn btn-primary" data-cloud="resume-mfa">Complete 2FA</button>`:''} ${cloud.recovery?`<form id="cloud-recovery-form"><label class="cloud-label">Choose a new password</label><input class="field wide" name="password" type="password" minlength="12" autocomplete="new-password" required><button class="btn btn-primary" type="submit">Set new password</button></form>`:''}
+ ${!cloud.mfaReady?`<p class="cloud-note">Enter the six-digit email security code before your synced projects become available.</p><button class="btn btn-primary" data-cloud="resume-mfa">Verify email code</button>`:''} ${cloud.recovery?`<form id="cloud-recovery-form"><label class="cloud-label">Choose a new password</label><input class="field wide" name="password" type="password" minlength="12" autocomplete="new-password" required><button class="btn btn-primary" type="submit">Set new password</button></form>`:''}
  ${rememberChoice()}<div class="cloud-actions"><button class="btn btn-outline" data-creator="edit">✦ Creator preferences</button><button class="btn btn-outline" data-cloud="sync">↻ Sync now</button><button class="btn btn-outline" data-cloud="import-guest">↑ Import this device’s guest workspace</button><button class="btn" data-cloud="logout">Sign out</button></div>`:
  `<h3>${cloud.authMode==='register'?'Create your account':'Welcome back'}</h3><button class="btn btn-primary" data-cloud="open-auth">Open quick registration / login →</button>
  ${configured&&!captchaEnabled?`<p>Use your email address and password. Email confirmation may be required on registration.</p>
@@ -200,10 +200,18 @@ async function initCloud(){if(!configured){cloud.syncInfo='Guest mode · Configu
  if(!/^https:\/\/[^/]+\.supabase\.co\/?$/.test(cfg.supabaseUrl)){cloud.syncInfo='Invalid Supabase URL in config.js';return;}
  if(!window.supabase?.createClient){cloud.syncInfo='Supabase library failed to load. Check your network.';render();return;}
  try{cloud.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey,{auth:{persistSession:true,storage:authStorage,autoRefreshToken:true,detectSessionInUrl:true}});
- cloud.sb.auth.onAuthStateChange((event,session)=>{if(event==='TOKEN_REFRESHED'&&session?.user&&!cloud.mfaReady)queueMicrotask(()=>checkMFA());if(event==='PASSWORD_RECOVERY'){cloud.recovery=true;queueMicrotask(()=>{state.page='account';render();});}const prior=cloud.user?.id||null,next=session?.user||null;
- if((next?.id||null)!==prior){cloud.user=next;cloud.canWrite=false;clearTimeout(cloud.timer);
- if(next)queueMicrotask(()=>checkMFA());else{cloud.mfaReady=false;cloud.mfaFactor=null;cloud.mfaEnrollment=null;cloud.lastSaved='';applyPayload(guestData);cloud.syncInfo='Guest — work is saved on this device only';render();}}
+ cloud.sb.auth.onAuthStateChange((event,session)=>{
+ if(event==='PASSWORD_RECOVERY'){cloud.recovery=true;queueMicrotask(()=>{state.page='account';render();});}
+ const prior=cloud.user?.id||null,next=session?.user||null;
+ const sid=session?.access_token?emailPrimarySessionId(session.access_token):null;
+ if((next?.id||null)!==prior||(next&&sid!==cloud.currentSessionId)){
+  cloud.user=next;cloud.currentSessionId=sid;cloud.canWrite=false;cloud.mfaReady=false;
+  emailSentAt=0;emailStatus='';emailClient=null;clearTimeout(cloud.timer);
+  if(next)queueMicrotask(()=>checkMFA());
+  else{cloud.lastSaved='';applyPayload(guestData);cloud.syncInfo='Guest — work is saved on this device only';render();}
+ }else if(event==='TOKEN_REFRESHED'&&next&&!cloud.mfaReady)queueMicrotask(()=>checkMFA());
  });
+
  const {data,error}=await cloud.sb.auth.getSession();if(error)throw error;
  if(data.session?.user&&!cloud.user){cloud.user=data.session.user;await checkMFA();}
  else{cloud.syncInfo='Guest mode — register or log in for cross-device sync';render();}
@@ -215,11 +223,11 @@ async function authSubmit(form){if(!cloud.sb)return toast('Configure Supabase fi
  try{const args={email,password};const captchaOpts=captchaEnabled?{captchaToken:cloud.captchaToken}:{};
  const result=cloud.authMode==='register'?await cloud.sb.auth.signUp({...args,options:{emailRedirectTo:location.origin+location.pathname,...captchaOpts}}):await cloud.sb.auth.signInWithPassword({...args,options:captchaOpts});
  if(result.error)throw result.error;
- if(cloud.authMode==='register'&&!result.data.session){cloud.syncInfo='Account created. Confirm your email, then sign in to set up the authenticator app.';cloud.authMode='login';showAuthModal();}
+ if(cloud.authMode==='register'&&!result.data.session){cloud.syncInfo='Account created. Confirm your email, then sign in for a six-digit email security code.';cloud.authMode='login';showAuthModal();}
  else{cloud.syncInfo='First sign-in successful. Complete 2FA to unlock your workspace.';if(result.data.session)await checkMFA();}
  }catch(e){cloud.syncInfo='Sign-in error: '+e.message;}finally{cloud.busy=false;cloud.captchaToken=null;render();if(!cloud.user)showAuthModal();}
 }
-async function accountAction(action){if(action==='regenerate-mfa'){
+async function accountAction(action){if(action==='resend-email-code'){await sendEmailFactorCode();return;}if(action==='regenerate-mfa'){
   if(!cloud.sb||!cloud.user||!cloud.mfaFactor||!cloud.mfaEnrollment)return toast('No unfinished setup to regenerate.');
   if(cloud.busy)return;
   cloud.busy=true;
@@ -259,7 +267,7 @@ function showAuthModal(){
  if(cloud.user){if(!cloud.mfaReady)checkMFA();else setPage('account');return;}
  const heading=cloud.authMode==='register'?'Create your Trend Studio account':'Welcome back';
  openModal(`<div class="auth-dialog"><div class="auth-icon">✦</div><button class="modal-x" type="button" data-cloud="close-modal" aria-label="Close">×</button>
- <h2>${heading}</h2><p>Email, password, then a secure authenticator-app code. Your account works on any device.</p>
+ <h2>${heading}</h2><p>Sign in with email/password or Google, then verify a six-digit code sent to your email.</p>
  ${configured?`<form id="cloud-auth-form"><label>Email address</label><input class="field wide" type="email" name="email" autocomplete="email" required placeholder="you@example.com" maxlength="254">
  <label>Password</label><input class="field wide" type="password" name="password" autocomplete="${cloud.authMode==='register'?'new-password':'current-password'}" required minlength="12" placeholder="At least 12 characters">
  ${cloud.authMode==='register'?`<label>Confirm password</label><input class="field wide" type="password" name="confirm" autocomplete="new-password" required minlength="12"></input>`:''}
@@ -344,6 +352,91 @@ async function verifyMFA(form){const code=String(new FormData(form).get('code')|
  try{const {error}=await cloud.sb.auth.mfa.challengeAndVerify({factorId:cloud.mfaFactor,code});if(error)throw error;
  cloud.mfaEnrollment=null;await checkMFA();}
  catch(e){toast('Authenticator code not accepted: '+e.message);submit.disabled=false;}
+}
+
+// Email-as-second-factor: email OTP is verified using a separate client.
+// The Edge Function validates BOTH signed sessions and authorizes the primary
+// Google/password session for access to private workspace RLS data.
+let emailClient=null,emailSentAt=0,emailBusy=false,emailStatus='';
+function emailPrimarySessionId(token){
+ try{
+  const v=token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+  const p=JSON.parse(atob(v.padEnd(Math.ceil(v.length/4)*4,'=')));
+  return /^[\da-f]{8}-[\da-f-]{27,}$/i.test(String(p.session_id||''))?p.session_id:null;
+ }catch{return null;}
+}
+function emailCodeClient(){
+ if(!emailClient)emailClient=window.supabase.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey,{
+  auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
+ });
+ return emailClient;
+}
+function emailCodeStatus(msg){
+ emailStatus=msg;
+ const el=document.getElementById('email-factor-status');if(el)el.textContent=msg;
+}
+function showEmailFactor(){
+ if(!cloud.user)return;
+ openModal('<div class="auth-dialog"><div class="auth-icon">✉️</div><h2>Check your email</h2>'+
+ '<p>A six-digit code is sent to <strong>'+html(cloud.user.email||'your account email')+'</strong>. Enter it to securely unlock your workspace.</p>'+
+ '<form id="email-factor-form"><label>Six-digit verification code</label>'+
+ '<input class="field wide" type="text" inputmode="numeric" autocomplete="one-time-code" name="code" pattern="[0-9]{6}" maxlength="6" required placeholder="000000" autofocus>'+
+ rememberChoice()+'<button class="btn btn-primary wide" type="submit">Verify and continue →</button></form>'+
+ '<p class="cloud-note" id="email-factor-status" aria-live="polite">'+html(emailStatus||'Sending your email code…')+'</p>'+
+ '<button class="panel-link" data-cloud="resend-email-code">↻ Resend code</button>'+
+ '<button class="panel-link" data-cloud="logout">Use another account</button>'+
+ '<p class="cloud-note">Only enter security codes here. Never share them or screenshots containing them.</p></div>');
+}
+async function sendEmailFactorCode(){
+ if(!cloud.user?.email||emailBusy)return;
+ const remaining=65000-(Date.now()-emailSentAt);
+ if(emailSentAt&&remaining>0)return emailCodeStatus('Wait '+Math.ceil(remaining/1000)+' seconds before resending.');
+ emailBusy=true;emailCodeStatus('Sending a six-digit code…');
+ try{
+  const {error}=await emailCodeClient().auth.signInWithOtp({email:cloud.user.email,options:{shouldCreateUser:false}});
+  if(error)throw error;
+  emailSentAt=Date.now();emailCodeStatus('Check your inbox and spam folder. If you receive a sign-in link instead, your email OTP template needs to be configured.');
+ }catch(e){emailCodeStatus('Email could not be sent: '+e.message);}
+ finally{emailBusy=false;}
+}
+checkMFA=async function(){
+ if(!cloud.sb||!cloud.user||cloud.mfaChecking)return;
+ cloud.mfaChecking=true;cloud.canWrite=false;
+ try{
+  const {data,error}=await cloud.sb.functions.invoke('trend-email-2fa',{body:{action:'status'}});
+  if(error)throw error;if(data?.error)throw Error(data.error);
+  if(!cloud.user)return;
+  if(data?.verified){
+   const unlock=!cloud.mfaReady;cloud.mfaReady=true;
+   if(unlock){closeModal();await loadCloud();toast('Email code verified — workspace unlocked');}
+  }else{
+   cloud.mfaReady=false;showEmailFactor();
+   if(!emailSentAt)queueMicrotask(()=>sendEmailFactorCode());
+  }
+ }catch(e){
+  cloud.mfaReady=false;cloud.syncInfo='Email security check: '+e.message;
+  showEmailFactor();emailCodeStatus(cloud.syncInfo);
+ }finally{cloud.mfaChecking=false;}
+};
+async function verifyEmailFactor(form){
+ if(!cloud.user||emailBusy)return;
+ const code=String(new FormData(form).get('code')||'').trim();
+ if(!/^\d{6}$/.test(code))return toast('Enter all six digits from the email.');
+ emailBusy=true;const submit=form.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
+ emailCodeStatus('Securely checking your code…');
+ try{
+  const userId=cloud.user.id;
+  const {data:otp,error:otpError}=await emailCodeClient().auth.verifyOtp({email:cloud.user.email,token:code,type:'email'});
+  if(otpError)throw otpError;
+  if(!otp?.session?.access_token)throw Error('Invalid or expired email code.');
+  if(cloud.user?.id!==userId)throw Error('Account changed. Sign in again.');
+  const {data,error}=await cloud.sb.functions.invoke('trend-email-2fa',{
+   body:{action:'verify',email_access_token:otp.session.access_token}
+  });
+  if(error)throw error;if(!data?.verified)throw Error(data?.error||'The server could not verify this code.');
+  emailClient=null;emailSentAt=0;emailStatus='';emailBusy=false;await checkMFA();
+ }catch(e){emailCodeStatus('Code not accepted: '+(e.message||String(e)));if(submit)submit.disabled=false;}
+ finally{emailBusy=false;}
 }
 
 // Google Identity Services (the access token lives only in memory).
@@ -559,7 +652,7 @@ document.addEventListener('change',async e=>{if(e.target?.id!=='import-cloud-wor
 document.addEventListener('change',e=>{if(e.target?.id!=='creator-niche')return;
  const area=document.getElementById('creator-topic-grid');if(area)area.innerHTML=setupTopics(e.target.value,[]);
 });
-document.addEventListener('submit',e=>{if(e.target?.id==='creator-profile-form'){e.preventDefault();saveCreatorProfile(e.target);return;}if(e.target?.id==='cloud-auth-form'){e.preventDefault();const f=new FormData(e.target);if(cloud.authMode==='register'&&f.get('password')!==f.get('confirm'))return toast('Passwords do not match.');authSubmit(e.target);}if(e.target?.id==='mfa-verify-form'){e.preventDefault();verifyMFA(e.target);}if(e.target?.id==='cloud-recovery-form'){e.preventDefault();const pass=String(new FormData(e.target).get('password')||'');if(pass.length<12)return toast('Password must be at least 12 characters');cloud.sb.auth.updateUser({password:pass}).then(({error})=>{if(error)toast(error.message);else{cloud.recovery=false;cloud.syncInfo='Password updated. You can use it on other devices.';render();toast('Password updated');}});}},true);
+document.addEventListener('submit',e=>{if(e.target?.id==='creator-profile-form'){e.preventDefault();saveCreatorProfile(e.target);return;}if(e.target?.id==='cloud-auth-form'){e.preventDefault();const f=new FormData(e.target);if(cloud.authMode==='register'&&f.get('password')!==f.get('confirm'))return toast('Passwords do not match.');authSubmit(e.target);}if(e.target?.id==='email-factor-form'){e.preventDefault();verifyEmailFactor(e.target);}if(e.target?.id==='cloud-recovery-form'){e.preventDefault();const pass=String(new FormData(e.target).get('password')||'');if(pass.length<12)return toast('Password must be at least 12 characters');cloud.sb.auth.updateUser({password:pass}).then(({error})=>{if(error)toast(error.message);else{cloud.recovery=false;cloud.syncInfo='Password updated. You can use it on other devices.';render();toast('Password updated');}});}},true);
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
  if(b.dataset.cloud){if(b.dataset.cloud==='close-modal'){closeModal();return;}accountAction(b.dataset.cloud);return;}
  if(b.dataset.creator==='edit'){showCreatorSetup();return;}
