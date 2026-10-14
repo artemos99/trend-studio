@@ -68,7 +68,7 @@ function opts(){
 async function globalSearch(more=false){
  if(!bridge()?.connected())return toast('Connect YouTube to search the public YouTube catalog.');
  if(D.loading)return;
- const term=String(document.getElementById('world-query')?.value||D.query||'').trim().slice(0,140);
+ const term=String(D.query||document.getElementById('world-query')?.value||'').trim().slice(0,140);
  if(term.length<2)return toast('Enter a theme of at least two characters.');
  if(more&&!D.next)return;
  const reset=!more,token=++D.request;
@@ -315,8 +315,8 @@ document.addEventListener('change',event=>{
 document.addEventListener('click',event=>{
  const b=eventsTarget(event);if(!b)return;
  if(b.dataset.worldChip!==undefined){
-  D.query=b.dataset.worldChip;D.searched=D.query;D.strict=true;D.pages=0;D.results=[];
-  if(bridge()?.connected())void globalSearch();else render();
+  D.query=b.dataset.worldChip;D.searched=D.query;D.strict=true;D.pages=0;D.results=[];render();
+  if(bridge()?.connected())void globalSearch();
  }
  if(b.dataset.worldMore!==undefined)void globalSearch(true);
  if(b.dataset.worldHelp!==undefined)helpPanel();
