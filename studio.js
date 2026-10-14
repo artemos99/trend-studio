@@ -199,11 +199,15 @@ function montagePreview(){
   video.src=previewURL(src);
   video.load();
   video.addEventListener('loadedmetadata',()=>{
-   video.currentTime=Math.min(clip.start,Math.max(0,video.duration-.1));
+   const start=Math.min(clip.start,Math.max(0,video.duration-.1));
+   if(Math.abs(video.currentTime-start)<.03){
+    loading=false;
+    video.play().catch(()=>toast('Press play in the preview to continue.'));
+   }else video.currentTime=start;
   },{once:true});
   video.addEventListener('seeked',()=>{
    loading=false;
-   video.play().catch(()=>{loading=false;toast('Press play on the preview to continue.');});
+   video.play().catch(()=>toast('Press play in the preview to continue.'));
   },{once:true});
   const hint=document.getElementById('studio-montage-progress');
   if(hint)hint.textContent='Previewing clip '+(ix+1)+' of '+clips.length+': '+src.name;
