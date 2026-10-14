@@ -7,7 +7,7 @@ const validId=x=>/^[A-Za-z0-9_-]{11}$/.test(String(x||""));
 const short=x=>Number(x||0).toLocaleString("en-US");
 const ago=x=>Math.max(1,(Date.now()-new Date(x||Date.now()).getTime())/86400000);
 const pct=(ratio)=>Math.round(Number(ratio||0)*100);
-const W={step:1,theme:"",results:[],selected:new Set(),curves:new Map(),errors:new Map(),searching:false,analyzing:false,found:false,reviewed:false,busyFile:false,sort:"relevance",showAll:false,previewId:null,previewClip:null};
+const W={step:1,theme:"",results:[],selected:new Set(),curves:new Map(),errors:new Map(),searching:false,analyzing:false,found:false,reviewed:false,busyFile:false,sort:"relevance",showAll:false,previewId:null,previewClip:null,previewAll:false};
 function localVideos(){
  return comp.sources.filter(f=>f.localOnly).map(f=>({
   id:f.youtubeId,snippet:{title:f.displayName||f.name,publishedAt:new Date().toISOString(),description:"",tags:[]},
@@ -81,7 +81,7 @@ function findTheme(){
  const input=document.getElementById('studio-theme'),theme=String(input?.value||'').trim().slice(0,90);
  if(theme.length<2)return toast('Enter a theme such as mystery box, or upload your original footage below.');
  if(!availableVideos().length)return toast('Connect YouTube or upload a video file to begin.');
- W.theme=theme;comp.theme=theme;W.found=true;W.selected.clear();W.curves.clear();W.errors.clear();W.reviewed=false;W.showAll=false;
+ W.theme=theme;comp.theme=theme;W.found=true;W.selected.clear();W.curves.clear();W.errors.clear();W.reviewed=false;W.showAll=false;W.previewAll=false;W.previewClip=null;comp.clips=[];compResultClear();
  updateResults();
  if(!W.results.length){W.showAll=true;updateResults();toast('No exact topic match. Showing all uploads so you can select manually.');}
  render();
@@ -187,6 +187,48 @@ function buildTimeline(){
  if(!result.length)return toast("No usable clips. Check file duration and set manual ranges.");
  comp.clips=result;W.reviewed=false;W.step=3;render();
 }
+function montagePreview(){
+ if(!comp.clips.length)return toast('Build the timeline first.');
+ W.previewAll=true;W.previewClip=null;render();
+ const video=document.getElementById('studio-montage-video');if(!video)return;
+ const clips=[...comp.clips];let ix=0,loading=false,finished=false;
+ function playNext(){
+  if(finished||ix>=clips.length){video.pause();return;}
+  const clip=clips[ix],src=compSource(clip.src);if(!src?.file){ix++;playNext();return;}
+  loading=true;video.pause();
+  video.src=previewURL(src);
+  video.load();
+  video.addEventListener('loadedmetadata',()=>{
+   video.currentTime=Math.min(clip.start,Math.max(0,video.duration-.1));
+  },{once:true});
+  video.addEventListener('seeked',()=>{
+   loading=false;
+   video.play().catch(()=>{loading=false;toast('Press play on the preview to continue.');});
+  },{once:true});
+  const hint=document.getElementById('studio-montage-progress');
+  if(hint)hint.textContent='Previewing clip '+(ix+1)+' of '+clips.length+': '+src.name;
+ }
+ video.addEventListener('timeupdate',()=>{
+  if(finished||loading)return;
+  const clip=clips[ix];
+  if(!clip)return;
+  if(video.currentTime>=clip.end-.08||video.ended){
+   video.pause();ix++;
+   if(ix>=clips.length){finished=true;const hint=document.getElementById('studio-montage-progress');if(hint)hint.textContent='Preview complete. Adjust any cut before exporting.';}
+   else playNext();
+  }
+ });
+ playNext();
+}
+function customClip(){
+ const sourceId=document.getElementById('studio-new-source')?.value,s=compSource(sourceId);
+ const start=Number(document.getElementById('studio-new-start')?.value),end=Number(document.getElementById('studio-new-end')?.value);
+ if(!s||!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>Number(s.duration)+.02||end-start<.5)
+  return toast('Choose an original video and a valid start/end range of at least 0.5 seconds.');
+ comp.clips.push({id:compId(),src:s.id,start,end,score:0,reason:'Custom edit'});
+ W.reviewed=false;W.previewClip=null;W.previewAll=false;compResultClear();render();
+ toast('Custom clip added to timeline.');
+}
 function clipRow(c,i){
  const s=compSource(c.src);if(!s)return "";
  return '<article class="studio-timeline-row"><div class="studio-clip-number">'+(i+1)+'</div><div class="studio-clip-detail"><b>'+h(s.name)+'</b><small>'+h(c.reason)+' · '+compSec(c.start)+'–'+compSec(c.end)+'</small></div>'+
@@ -232,7 +274,14 @@ function wizardView(){
  return head+mode+'<div class="studio-actions"><button class="btn btn-outline" data-studio-back="2">← Adjust source videos</button><button class="btn btn-outline" data-studio-remake>↻ Regenerate cuts</button></div>'+
  '<div class="panel studio-panel"><h3>Step 3 · Review the highlight timeline</h3>'+
  '<p>'+comp.clips.length+' clips · '+compSec(compClipDuration())+' total · target '+compSec(comp.target)+'. Local retention peaks are ranked, sources are alternated, and clips remain fully editable.</p>'+
+ '<div class="studio-actions"><button class="btn btn-outline" data-studio-preview-all>▶ Preview complete sequence</button></div>'+
  '<div class="studio-timeline">'+comp.clips.map(clipRow).join("")+'</div>'+
+ (W.previewAll?'<div class="studio-clip-player"><div class="pro-row-between"><b>Montage preview · before export</b><button class="btn btn-outline" data-studio-close-preview>Close</button></div>'+
+ '<video id="studio-montage-video" class="studio-source-preview" preload="metadata" controls playsinline></video><small id="studio-montage-progress" class="studio-note">Preparing preview…</small></div>':'')+
+ '<div class="studio-add-cut"><b>Add a custom cut</b><div class="studio-add-cut-fields"><label>Source<select class="field" id="studio-new-source">'+chosen().filter(v=>fileFor(v.id)).map(v=>'<option value="'+h(fileFor(v.id).id)+'">'+h(v.snippet?.title)+'</option>').join('')+'</select></label>'+
+ '<label>Start (seconds)<input class="field" type="number" step="0.1" min="0" id="studio-new-start" value="0"></label>'+
+ '<label>End (seconds)<input class="field" type="number" step="0.1" min="0.5" id="studio-new-end" value="12"></label>'+
+ '<button class="btn btn-outline" data-studio-add-cut>＋ Add clip</button></div></div>'+
  (W.previewClip&&comp.clips.some(x=>x.id===W.previewClip)?
  '<div class="studio-clip-player"><div class="pro-row-between"><b>Preview selected cut</b><button class="btn btn-outline" data-studio-close-preview>Close</button></div>'+
  '<video id="studio-clip-video" class="studio-source-preview" preload="metadata" controls playsinline src="'+h(previewURL(compSource(comp.clips.find(c=>c.id===W.previewClip).src)))+'"></video>'+
@@ -267,8 +316,11 @@ document.addEventListener("click",e=>{
  if(b.dataset.studioSelectAll!==undefined){for(const v of W.results){if(W.selected.size>=8)break;W.selected.add(v.id);}render();return;}
  if(b.dataset.studioClearSelection!==undefined){W.selected.clear();render();return;}
  if(b.dataset.studioPreviewSource!==undefined){const id=b.dataset.studioPreviewSource;W.previewId=W.previewId===id?null:id;render();return;}
- if(b.dataset.studioClosePreview!==undefined){W.previewClip=null;render();return;}
+ if(b.dataset.studioClosePreview!==undefined){W.previewClip=null;W.previewAll=false;render();return;}
+ if(b.dataset.studioPreviewAll!==undefined){montagePreview();return;}
+ if(b.dataset.studioAddCut!==undefined){customClip();return;}
  if(b.dataset.studioPreviewClip!==undefined){
+  W.previewAll=false;
   W.previewClip=b.dataset.studioPreviewClip===W.previewClip?null:b.dataset.studioPreviewClip;
   render();
   const clip=comp.clips.find(x=>x.id===W.previewClip),video=document.getElementById('studio-clip-video');
@@ -308,5 +360,5 @@ document.addEventListener("change",e=>{
  if(t.id==="studio-rights"){comp.rights=t.checked;render();return;}
 });
 document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target?.id==="studio-theme"){e.preventDefault();findTheme();}});
-const sheet=document.createElement("style");sheet.textContent=String.raw`.studio-workspace{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 18px;color:#afc0d1;font-size:12px}.studio-workspace .btn{margin-left:auto}.studio-drop-area{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:linear-gradient(130deg,#1d2b45,#242743);border:1px dashed #8470d8;padding:18px;margin:16px 0;border-radius:12px}.studio-drop-area strong{font-size:15px}.studio-drop-area p{margin:3px 0!important}.studio-upload-main{position:relative;overflow:hidden;cursor:pointer}.studio-upload-main input{position:absolute;opacity:0;inset:0;cursor:pointer}.studio-filterbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.studio-filterbar label{display:flex;gap:8px;align-items:center;font-size:12px}.studio-filterbar .field{max-width:200px}.studio-local-thumb{width:118px;aspect-ratio:16/9;background:linear-gradient(135deg,#493763,#243f66);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}.studio-local-thumb span{font-size:9px;color:#e4d8f3}.studio-export-options{display:flex;align-items:center;flex-wrap:wrap;gap:15px;margin:20px 0}.studio-export-options label{display:flex;align-items:center;gap:10px;font-size:12px}.studio-clip-player{background:#17243b;border:1px solid #455574;border-radius:11px;padding:14px;margin:13px 0}.studio-clip-player .studio-source-preview{max-height:360px}.studio-source-preview{display:block;width:100%;max-width:560px;max-height:300px;margin:12px 0;border-radius:9px;background:#000}.studio-preview-btn{margin:10px 0}.studio-progress{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 22px}.studio-progress>div{display:flex;gap:9px;align-items:center;background:#1b2438;border:1px solid #354159;border-radius:12px;padding:15px;color:#9daabf}.studio-progress b{background:#313f5a;border-radius:50%;height:28px;width:28px;display:grid;place-items:center}.studio-progress>.active{border-color:#9274ee;color:#f0eaff;background:#292740}.studio-progress>.done{border-color:#568c7b;color:#b6ecd3}.studio-panel{padding:22px;margin-bottom:18px}.studio-panel p{font-size:13px;color:#aebbd0;line-height:1.5}.studio-search{display:flex;gap:8px;margin:16px 0 22px}.studio-search input{flex:1}.studio-results{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:14px 0;max-height:740px;overflow:auto}.studio-video-card{display:block;background:#1a273b;border:1px solid #35465e;border-radius:11px;padding:9px;cursor:pointer}.studio-video-card.selected{border-color:#947ce5;background:#29283e}.studio-video-card>input{accent-color:#a990ff;margin:0 0 8px}.studio-video-body,.studio-upload-head{display:flex;gap:12px}.studio-video-body img,.studio-upload-head img{width:118px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;align-self:start}.studio-video-body strong,.studio-upload-head strong{display:block;font-size:13px;line-height:1.3}.studio-video-body small,.studio-upload-head small{display:block;color:#afbdd3;font-size:11px;margin-top:5px}.studio-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin:17px 0}.studio-empty{padding:25px;border-radius:10px;background:#19253a;color:#9aabc0;text-align:center}.studio-note{font-size:12px;color:#a9b8ce;line-height:1.4}.studio-warning{font-size:12px;background:#362c33;border:1px solid #705462;color:#ffe0d8!important;border-radius:9px;padding:11px}.studio-sourcegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(370px,1fr));gap:13px;margin:16px 0}.studio-upload-card{padding:17px;min-width:0}.studio-retention-chart{height:110px;display:flex;align-items:end;gap:2px;margin-top:12px;padding:10px 2px 0;background:#17243a;border-radius:8px}.studio-retention-chart span{background:linear-gradient(0deg,#7967e2,#c09efa);flex:1;border-radius:3px 3px 0 0;min-height:3px}.studio-peaks{margin:12px 0}.studio-peak-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.studio-peak-list a{font-size:11px;color:#c8b6ff;border:1px solid #4b476e;border-radius:8px;padding:7px;text-decoration:none}.studio-source-file{margin-top:12px;display:flex;flex-wrap:wrap;align-items:center;gap:9px}.studio-manual{display:flex;gap:12px;margin-top:11px}.studio-manual label{max-width:150px;font-size:11px;color:#b9c8db}.studio-manual input{width:100%;margin-top:5px}.studio-duration-label{display:flex;align-items:center;gap:14px}.studio-timeline-row{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid #354056}.studio-clip-number{width:26px;height:26px;border-radius:50%;background:#464379;display:grid;place-items:center;flex-shrink:0}.studio-clip-detail{flex:1;min-width:120px}.studio-clip-detail b,.studio-clip-detail small{display:block}.studio-clip-detail b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-clip-detail small{color:#aebbd0;font-size:11px}.studio-timeline-row label{font-size:10px;color:#abb8cd}.studio-timeline-row input{max-width:86px;width:86px}.studio-review{display:flex;gap:10px;align-items:center;margin-top:15px;font-size:13px;color:#c6d2e2}.studio-review input{width:17px;height:17px;accent-color:#a890ec}.studio-rendering canvas{max-width:530px;width:100%;aspect-ratio:16/9;margin-top:10px}.studio-complete{padding:15px;background:#213b39;border-radius:12px;border:1px solid #427669;margin-top:15px}.studio-complete video{display:block;max-width:570px;width:100%;margin:10px 0;border-radius:9px}.studio-complete a{display:inline-flex;margin-top:9px}@media(max-width:760px){.studio-progress>div{padding:9px;font-size:11px}.studio-search{flex-direction:column}.studio-sourcegrid{grid-template-columns:1fr}.studio-timeline-row{flex-wrap:wrap}.studio-timeline-row .studio-clip-detail{flex-basis:70%}}`;document.head.append(sheet);
+const sheet=document.createElement("style");sheet.textContent=String.raw`.studio-workspace{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 18px;color:#afc0d1;font-size:12px}.studio-workspace .btn{margin-left:auto}.studio-drop-area{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:linear-gradient(130deg,#1d2b45,#242743);border:1px dashed #8470d8;padding:18px;margin:16px 0;border-radius:12px}.studio-drop-area strong{font-size:15px}.studio-drop-area p{margin:3px 0!important}.studio-upload-main{position:relative;overflow:hidden;cursor:pointer}.studio-upload-main input{position:absolute;opacity:0;inset:0;cursor:pointer}.studio-filterbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.studio-filterbar label{display:flex;gap:8px;align-items:center;font-size:12px}.studio-filterbar .field{max-width:200px}.studio-local-thumb{width:118px;aspect-ratio:16/9;background:linear-gradient(135deg,#493763,#243f66);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}.studio-local-thumb span{font-size:9px;color:#e4d8f3}.studio-export-options{display:flex;align-items:center;flex-wrap:wrap;gap:15px;margin:20px 0}.studio-export-options label{display:flex;align-items:center;gap:10px;font-size:12px}.studio-add-cut{margin:16px 0;padding:16px;background:#1c2b44;border:1px dashed #665aa0;border-radius:11px}.studio-add-cut>b{display:block;margin-bottom:12px;font-size:14px}.studio-add-cut-fields{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.studio-add-cut-fields label{display:flex;flex-direction:column;gap:5px;font-size:11px;flex:1;min-width:145px}.studio-add-cut-fields label:first-child{flex:2;min-width:200px}.studio-add-cut-fields input{width:100%}.studio-clip-player{background:#17243b;border:1px solid #455574;border-radius:11px;padding:14px;margin:13px 0}.studio-clip-player .studio-source-preview{max-height:360px}.studio-source-preview{display:block;width:100%;max-width:560px;max-height:300px;margin:12px 0;border-radius:9px;background:#000}.studio-preview-btn{margin:10px 0}.studio-progress{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 22px}.studio-progress>div{display:flex;gap:9px;align-items:center;background:#1b2438;border:1px solid #354159;border-radius:12px;padding:15px;color:#9daabf}.studio-progress b{background:#313f5a;border-radius:50%;height:28px;width:28px;display:grid;place-items:center}.studio-progress>.active{border-color:#9274ee;color:#f0eaff;background:#292740}.studio-progress>.done{border-color:#568c7b;color:#b6ecd3}.studio-panel{padding:22px;margin-bottom:18px}.studio-panel p{font-size:13px;color:#aebbd0;line-height:1.5}.studio-search{display:flex;gap:8px;margin:16px 0 22px}.studio-search input{flex:1}.studio-results{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:14px 0;max-height:740px;overflow:auto}.studio-video-card{display:block;background:#1a273b;border:1px solid #35465e;border-radius:11px;padding:9px;cursor:pointer}.studio-video-card.selected{border-color:#947ce5;background:#29283e}.studio-video-card>input{accent-color:#a990ff;margin:0 0 8px}.studio-video-body,.studio-upload-head{display:flex;gap:12px}.studio-video-body img,.studio-upload-head img{width:118px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;align-self:start}.studio-video-body strong,.studio-upload-head strong{display:block;font-size:13px;line-height:1.3}.studio-video-body small,.studio-upload-head small{display:block;color:#afbdd3;font-size:11px;margin-top:5px}.studio-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin:17px 0}.studio-empty{padding:25px;border-radius:10px;background:#19253a;color:#9aabc0;text-align:center}.studio-note{font-size:12px;color:#a9b8ce;line-height:1.4}.studio-warning{font-size:12px;background:#362c33;border:1px solid #705462;color:#ffe0d8!important;border-radius:9px;padding:11px}.studio-sourcegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(370px,1fr));gap:13px;margin:16px 0}.studio-upload-card{padding:17px;min-width:0}.studio-retention-chart{height:110px;display:flex;align-items:end;gap:2px;margin-top:12px;padding:10px 2px 0;background:#17243a;border-radius:8px}.studio-retention-chart span{background:linear-gradient(0deg,#7967e2,#c09efa);flex:1;border-radius:3px 3px 0 0;min-height:3px}.studio-peaks{margin:12px 0}.studio-peak-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.studio-peak-list a{font-size:11px;color:#c8b6ff;border:1px solid #4b476e;border-radius:8px;padding:7px;text-decoration:none}.studio-source-file{margin-top:12px;display:flex;flex-wrap:wrap;align-items:center;gap:9px}.studio-manual{display:flex;gap:12px;margin-top:11px}.studio-manual label{max-width:150px;font-size:11px;color:#b9c8db}.studio-manual input{width:100%;margin-top:5px}.studio-duration-label{display:flex;align-items:center;gap:14px}.studio-timeline-row{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid #354056}.studio-clip-number{width:26px;height:26px;border-radius:50%;background:#464379;display:grid;place-items:center;flex-shrink:0}.studio-clip-detail{flex:1;min-width:120px}.studio-clip-detail b,.studio-clip-detail small{display:block}.studio-clip-detail b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-clip-detail small{color:#aebbd0;font-size:11px}.studio-timeline-row label{font-size:10px;color:#abb8cd}.studio-timeline-row input{max-width:86px;width:86px}.studio-review{display:flex;gap:10px;align-items:center;margin-top:15px;font-size:13px;color:#c6d2e2}.studio-review input{width:17px;height:17px;accent-color:#a890ec}.studio-rendering canvas{max-width:530px;width:100%;aspect-ratio:16/9;margin-top:10px}.studio-complete{padding:15px;background:#213b39;border-radius:12px;border:1px solid #427669;margin-top:15px}.studio-complete video{display:block;max-width:570px;width:100%;margin:10px 0;border-radius:9px}.studio-complete a{display:inline-flex;margin-top:9px}@media(max-width:760px){.studio-progress>div{padding:9px;font-size:11px}.studio-search{flex-direction:column}.studio-sourcegrid{grid-template-columns:1fr}.studio-timeline-row{flex-wrap:wrap}.studio-timeline-row .studio-clip-detail{flex-basis:70%}}`;document.head.append(sheet);
 })();
