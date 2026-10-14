@@ -215,8 +215,8 @@ function ownAnalyticsView(){
 
 const pageRender=render;
 render=function(){
- if(state.page==="recommended"){document.getElementById("page-root").innerHTML=recommendedView();badge();return;}
- if(state.page==="analytics"){document.getElementById("page-root").innerHTML=ownAnalyticsView();badge();return;}
+ if(state.page==="recommended"){document.getElementById("page-root").innerHTML=recommendedView();return;}
+ if(state.page==="analytics"){document.getElementById("page-root").innerHTML=ownAnalyticsView();return;}
  pageRender();
 };
 const pageSet=setPage;
