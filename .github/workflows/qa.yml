@@ -21,7 +21,7 @@ on:
       - 'qa/**'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   regression:
@@ -40,15 +40,4 @@ jobs:
           node --check pro.js
           node --check discovery.js
       - name: Integrated workflow tests
-        run: |
-          set -o pipefail
-          node --test qa/site.test.cjs 2>&1 | tee /tmp/trend-qa-output.txt
-      - name: Preserve failing assertions for maintenance
-        if: failure()
-        run: |
-          cp /tmp/trend-qa-output.txt qa/last-failure.txt
-          git config user.name "Trend Studio QA Bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add qa/last-failure.txt
-          git commit -m "QA failure diagnostics [skip ci]" || true
-          git push || true
+        run: node --test qa/site.test.cjs
