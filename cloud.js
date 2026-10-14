@@ -699,6 +699,52 @@ window.TrendBridge=Object.freeze({
   const allowed=['US','GB','CA','BR','IN','MX','DE','AU'];
   return (await ytRequest('/youtube/v3/videos',{part:'snippet,statistics,contentDetails',chart:'mostPopular',regionCode:allowed.includes(region)?region:'US',maxResults:50})).items||[];
  },
+ searchGlobalVideos:async(query,options={})=>{
+  if(!canRead())throw Error('Authorize YouTube to search across public channels.');
+  const q=String(query||'').trim().slice(0,140);
+  if(q.length<2)throw Error('Enter a theme or phrase (at least 2 characters).');
+  const orders=['relevance','viewCount','date'];
+  const regions=['US','GB','CA','IN','BR','MX','DE','AU'];
+  const langs=['en','es','ru','pt','de','fr','hi'];
+  const days=[7,30,90,365].includes(Number(options.days))?Number(options.days):0;
+  const params={part:'snippet',type:'video',q,maxResults:50,
+   order:orders.includes(options.order)?options.order:'relevance',
+   safeSearch:'moderate',
+   ...(days?{publishedAfter:new Date(Date.now()-days*86400000).toISOString()}:{}),
+   ...(regions.includes(options.region)?{regionCode:options.region}:{}),
+   ...(langs.includes(options.language)?{relevanceLanguage:options.language}:{}),
+   ...(typeof options.pageToken==='string'&&/^[\w-]{1,200}$/.test(options.pageToken)?{pageToken:options.pageToken}:{})};
+  const found=await ytRequest('/youtube/v3/search',params);
+  const ids=(found.items||[]).map(x=>x.id?.videoId).filter(x=>/^[\w-]{11}$/.test(x));
+  if(!ids.length)return {videos:[],nextPageToken:null,estimatedTotal:found.pageInfo?.totalResults||0};
+  const detailed=await ytRequest('/youtube/v3/videos',{part:'snippet,statistics,contentDetails',id:ids.join(','),maxResults:50});
+  const channels=[...new Set((detailed.items||[]).map(x=>x.snippet?.channelId).filter(x=>/^UC[\w-]{22}$/.test(x)))];
+  const channelDetails=channels.length?await ytRequest('/youtube/v3/channels',{part:'snippet,statistics',id:channels.join(','),maxResults:50}):{items:[]};
+  const videoMap=new Map((detailed.items||[]).map(v=>[v.id,v]));
+  const channelMap=new Map((channelDetails.items||[]).map(c=>[c.id,c]));
+  return{
+   videos:ids.map(id=>{
+    const v=videoMap.get(id);if(!v)return null;
+    const ch=channelMap.get(v.snippet?.channelId);
+    return{
+     id,title:v.snippet?.title||'',description:v.snippet?.description||'',
+     tags:Array.isArray(v.snippet?.tags)?v.snippet.tags.slice(0,50):[],
+     channelId:v.snippet?.channelId||'',channel:v.snippet?.channelTitle||'',
+     channelAvatar:ch?.snippet?.thumbnails?.default?.url||'',
+     subscriberCount:ch?.statistics?.hiddenSubscriberCount?null:Number(ch?.statistics?.subscriberCount??0),
+     subscribersHidden:Boolean(ch?.statistics?.hiddenSubscriberCount),
+     views:Number(v.statistics?.viewCount||0),likes:Number(v.statistics?.likeCount||0),
+     comments:Number(v.statistics?.commentCount||0),
+     publishedAt:v.snippet?.publishedAt||'',
+     thumbnailUrl:v.snippet?.thumbnails?.medium?.url||'',
+     duration:parseDuration(v.contentDetails?.duration)
+    };
+   }).filter(Boolean),
+   nextPageToken:found.nextPageToken||null,
+   estimatedTotal:found.pageInfo?.totalResults||0,
+   fetchedAt:Date.now()
+  };
+ },
  ownRetention:async(id)=>{
   if(!yt.ownVideos.some(v=>v.id===id))throw Error('Select one of your channel videos.');
   if(!canRead())throw Error('Reconnect YouTube.');
