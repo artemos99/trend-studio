@@ -17,7 +17,7 @@ const colors=new Set(['color','colors','colour','colours','pink','red','blue','b
 const gameWords=new Set(['challenge','challenges','vs','versus','battle','compete','competition','contest','team','teams','race','only','choose','chooses','pick','picks','swap','swaps','switch','switching','last','wins','win','build','building','24','survive','hide','seek']);
 const similarTerms={colors:'color',colours:'color',colour:'color',challenges:'challenge',competing:'competition',competitions:'competition',vs:'versus',challenges:'challenge',hiding:'hide',hidden:'hide',seeking:'seek',boxes:'box',mysteries:'mystery'};
 const canonical=t=>similarTerms[t]||t;
-const D={query:'',searched:'',results:[],loading:false,error:'',next:null,pages:0,fetchedAt:0,sort:'relevance',minViews:0,minSubs:0,days:0,region:'',language:'',strict:true,searchOrder:'relevance',selected:null,related:[],relatedLoading:false,relatedError:'',visualAttempted:false,visualCount:0,request:0,cache:new Map(),detailRequest:0};
+const D={query:'',searched:'',results:[],loading:false,error:'',next:null,pages:0,fetchedAt:0,sort:'relevance',minViews:0,minSubs:0,days:0,region:'',language:'',strict:true,searchOrder:'relevance',selected:null,related:[],relatedLoading:false,relatedError:'',visualAttempted:false,visualCount:0,request:0,pending:false,cache:new Map(),detailRequest:0};
 const fingerprintCache=new Map();
 const defaultTheme=()=>bridge()?.creatorProfile()?.topics?.[0]||'color challenge';
 
@@ -67,7 +67,7 @@ function opts(){
 }
 async function globalSearch(more=false){
  if(!bridge()?.connected())return toast('Connect YouTube to search the public YouTube catalog.');
- if(D.loading)return;
+ if(D.loading){D.pending=true;return;}
  const term=String(D.query||document.getElementById('world-query')?.value||'').trim().slice(0,140);
  if(term.length<2)return toast('Enter a theme of at least two characters.');
  if(more&&!D.next)return;
@@ -90,7 +90,7 @@ async function globalSearch(more=false){
   D.fetchedAt=Date.now();
   if(!more&&D.strict&&!D.results.some(x=>relevance(x,term).valid))D.error='No strong theme matches in this sample. Try broader keywords, change the search region, or turn off strict relevance.';
  }catch(e){if(token===D.request)D.error=e.message||String(e);}
- finally{if(token===D.request){D.loading=false;render();}}
+ finally{if(token===D.request){D.loading=false;render();if(D.pending){D.pending=false;void globalSearch(false);}}}
 }
 function formatDate(value){const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'Unknown';}
 function pills(v){
