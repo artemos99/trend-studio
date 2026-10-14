@@ -171,7 +171,7 @@ function accountPage(){const msg=cloud.syncInfo;
  return header('Your <span class="title-accent">creator account.</span>','Sign in on any device to sync your Idea Vault, competitor watchlist, searches and production planner.','ACCOUNT & CLOUD')+
  `<div class="settings-grid"><div class="panel settings-block">
  ${cloud.user?`<h3>${cloud.mfaReady?'✓ Signed in securely':'🔐 Two-factor verification needed'}</h3><p><span class="tag green">${html(cloud.user.email||'Account')}</span></p><p>${html(msg)}</p><div class="settings-note">Changes to your ideas, keywords and competitor watchlist sync automatically between devices. Your actual video files stay on your computer.</div>
- ${!cloud.mfaReady?`<p class="cloud-note">Enter the six-digit email security code before your synced projects become available.</p><button class="btn btn-primary" data-cloud="resume-mfa">Verify email code</button>`:''} ${cloud.recovery?`<form id="cloud-recovery-form"><label class="cloud-label">Choose a new password</label><input class="field wide" name="password" type="password" minlength="12" autocomplete="new-password" required><button class="btn btn-primary" type="submit">Set new password</button></form>`:''}
+ ${!cloud.mfaReady?`<p class="cloud-note">Enter a six-digit email code or use an authenticator app before your synced projects become available.</p><button class="btn btn-primary" data-cloud="resume-mfa">Verify account</button>`:''} ${cloud.recovery?`<form id="cloud-recovery-form"><label class="cloud-label">Choose a new password</label><input class="field wide" name="password" type="password" minlength="12" autocomplete="new-password" required><button class="btn btn-primary" type="submit">Set new password</button></form>`:''}
  ${rememberChoice()}<div class="cloud-actions"><button class="btn btn-outline" data-creator="edit">✦ Creator preferences</button><button class="btn btn-outline" data-cloud="sync">↻ Sync now</button><button class="btn btn-outline" data-cloud="import-guest">↑ Import this device’s guest workspace</button><button class="btn" data-cloud="logout">Sign out</button></div>`:
  `<h3>${cloud.authMode==='register'?'Create your account':'Welcome back'}</h3><button class="btn btn-primary" data-cloud="open-auth">Open quick registration / login →</button>
  ${configured&&!captchaEnabled?`<p>Use your email address and password. Email confirmation may be required on registration.</p>
@@ -227,7 +227,11 @@ async function authSubmit(form){if(!cloud.sb)return toast('Configure Supabase fi
  else{cloud.syncInfo='First sign-in successful. Complete 2FA to unlock your workspace.';if(result.data.session)await checkMFA();}
  }catch(e){cloud.syncInfo='Sign-in error: '+e.message;}finally{cloud.busy=false;cloud.captchaToken=null;render();if(!cloud.user)showAuthModal();}
 }
-async function accountAction(action){if(action==='resend-email-code'){await sendEmailFactorCode();return;}if(action==='open-auth'){cloud.authMode=cloud.user?'login':'register';if(cloud.user){setPage('account');if(!cloud.mfaReady)checkMFA();}else showAuthModal();return;}
+async function accountAction(action){if(action==='resend-email-code'){await sendEmailFactorCode();return;}
+ if(action==='use-authenticator'){await openAuthenticator();return;}
+ if(action==='use-email-factor'){showEmailFactor();if(!emailSentAt)await sendEmailFactorCode();return;}
+ if(action==='refresh-authenticator'){await resetAuthenticatorSetup();return;}
+ if(action==='open-auth'){cloud.authMode=cloud.user?'login':'register';if(cloud.user){setPage('account');if(!cloud.mfaReady)checkMFA();}else showAuthModal();return;}
  if(action==='resume-mfa'){await checkMFA();return;}
  if(action==='mode'){cloud.authMode=cloud.authMode==='login'?'register':'login';showAuthModal();return;}
  if(action==='google-login'){if(!cloud.sb)return toast('Configure Supabase first.');
@@ -299,6 +303,7 @@ function showEmailFactor(){
  '<input class="field wide" type="text" inputmode="numeric" autocomplete="one-time-code" name="code" pattern="[0-9]{6}" maxlength="6" required placeholder="000000" autofocus>'+
  rememberChoice()+'<button class="btn btn-primary wide" type="submit">Verify and continue →</button></form>'+
  '<p class="cloud-note" id="email-factor-status" aria-live="polite">'+html(emailStatus||'Sending your email code…')+'</p>'+
+ '<button class="btn btn-outline wide" data-cloud="use-authenticator" style="margin:13px 0 6px">🔐 Use an authenticator app instead</button>'+ 
  '<button class="panel-link" data-cloud="resend-email-code">↻ Resend code</button>'+
  '<button class="panel-link" data-cloud="logout">Use another account</button>'+
  '<p class="cloud-note">Only enter security codes here. Never share them or screenshots containing them.</p></div>');
@@ -311,29 +316,118 @@ async function sendEmailFactorCode(){
  try{
   const {error}=await emailCodeClient().auth.signInWithOtp({email:cloud.user.email,options:{shouldCreateUser:false}});
   if(error)throw error;
-  emailSentAt=Date.now();emailCodeStatus('Check your inbox and spam folder. If you receive a sign-in link instead, your email OTP template needs to be configured.');
+  emailSentAt=Date.now();emailCodeStatus('Check your inbox and spam folder for a six-digit code. If you receive a clickable link instead, choose Authenticator app or ask the admin to change the Supabase Magic Link template to use {{ .Token }}.');
  }catch(e){emailCodeStatus('Email could not be sent: '+e.message);}
  finally{emailBusy=false;}
+}
+
+function totpButtons(){
+ return '<button type="button" class="btn btn-outline wide" data-cloud="use-email-factor" style="margin:13px 0 6px">✉️ Use email code instead</button>'+
+ '<button type="button" class="panel-link" data-cloud="logout">Use a different account</button>';
+}
+async function openAuthenticator(){
+ if(!cloud.sb||!cloud.user)return;
+ try{
+  const {data,error}=await cloud.sb.auth.mfa.listFactors();
+  if(error)throw error;
+  const all=Array.isArray(data?.all)?data.all:[];
+  const verified=(data?.totp||[]).find(x=>x.status==='verified')||
+   all.find(x=>x.factor_type==='totp'&&x.status==='verified');
+  if(verified){
+   cloud.mfaFactor=verified.id;cloud.mfaEnrollment=null;
+   showAuthenticatorChallenge();return;
+  }
+  // Remove abandoned setup attempts. Verified factors are never removed.
+  for(const factor of all){
+   if(factor.factor_type==='totp'&&factor.status==='unverified'&&String(factor.friendly_name||'').startsWith('Trend Studio authenticator')){
+    const {error:removeErr}=await cloud.sb.auth.mfa.unenroll({factorId:factor.id});
+    if(removeErr)throw removeErr;
+   }
+  }
+  const enrolled=await cloud.sb.auth.mfa.enroll({factorType:'totp',friendlyName:'Trend Studio authenticator '+Date.now().toString(36)});
+  if(enrolled.error)throw enrolled.error;
+  cloud.mfaFactor=enrolled.data.id;cloud.mfaEnrollment=enrolled.data.totp;
+  showAuthenticatorSetup();
+ }catch(e){toast('Authenticator setup: '+(e.message||String(e)));showEmailFactor();}
+}
+function showAuthenticatorSetup(){
+ const factor=cloud.mfaEnrollment;
+ if(!factor)return toast('Start authenticator setup again.');
+ const qr=String(factor.qr_code||'');
+ const image=/^data:image\/svg\+xml(?:;charset=[\w-]+)?;base64,[A-Za-z0-9+/=]+$/.test(qr)?qr:'';
+ openModal('<div class="auth-dialog"><div class="auth-icon">🔐</div><h2>Set up an authenticator app</h2>'+
+ '<p>Scan the QR code with Google Authenticator, Microsoft Authenticator, 1Password, or another TOTP app. Enter its six-digit code to finish setup.</p>'+
+ (image?'<img class="mfa-qr" src="'+html(image)+'" alt="Private authenticator enrollment QR code">':
+ '<p class="settings-note">The QR code could not be displayed. Use the manual setup key below.</p>')+
+ '<details style="margin:12px 0"><summary>Show private manual setup key</summary>'+
+ '<code class="mfa-secret">'+html(factor.secret||'')+'</code></details>'+
+ '<form id="totp-factor-form"><label>Code from your authenticator</label>'+
+ '<input class="field wide" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="000000" autofocus>'+
+ rememberChoice()+'<button class="btn btn-primary wide" type="submit">Verify authenticator →</button></form>'+
+ '<button type="button" class="panel-link" data-cloud="refresh-authenticator">↻ Generate a new setup key</button>'+
+ totpButtons()+'<p class="cloud-note">Keep the QR code and manual setup key private. Never share screenshots containing them.</p></div>');
+}
+function showAuthenticatorChallenge(){
+ openModal('<div class="auth-dialog"><div class="auth-icon">🔐</div><h2>Use your authenticator app</h2>'+
+ '<p>Enter the six-digit code generated by the app already linked to your account.</p>'+
+ '<form id="totp-factor-form"><label>Authenticator code</label>'+
+ '<input class="field wide" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="000000" autofocus>'+
+ rememberChoice()+'<button class="btn btn-primary wide" type="submit">Verify and continue →</button></form>'+
+ totpButtons()+'</div>');
+}
+async function resetAuthenticatorSetup(){
+ if(!cloud.sb||!cloud.user||!cloud.mfaEnrollment||!cloud.mfaFactor)return openAuthenticator();
+ try{
+  const {error}=await cloud.sb.auth.mfa.unenroll({factorId:cloud.mfaFactor});
+  if(error)throw error;
+  cloud.mfaFactor=null;cloud.mfaEnrollment=null;await openAuthenticator();
+ }catch(e){toast('Could not reset setup: '+e.message);}
+}
+async function verifyAuthenticator(form){
+ if(!cloud.sb||!cloud.user||!cloud.mfaFactor)return toast('Choose an authenticator first.');
+ const code=String(new FormData(form).get('code')||'').trim();
+ if(!/^[0-9]{6}$/.test(code))return toast('Enter the six-digit authenticator code.');
+ const submit=form.querySelector('button[type="submit"]');
+ if(submit)submit.disabled=true;
+ try{
+  const {error}=await cloud.sb.auth.mfa.challengeAndVerify({factorId:cloud.mfaFactor,code});
+  if(error)throw error;
+  cloud.mfaEnrollment=null;
+  await checkMFA();
+ }catch(e){
+  toast('Authenticator verification failed: '+(e.message||String(e)));
+  if(submit)submit.disabled=false;
+ }
 }
 async function checkMFA(){
  if(!cloud.sb||!cloud.user||cloud.mfaChecking)return;
  cloud.mfaChecking=true;cloud.canWrite=false;
  try{
-  const {data,error}=await cloud.sb.functions.invoke('trend-email-2fa',{body:{action:'status'}});
-  if(error)throw error;if(data?.error)throw Error(data.error);
+  // Supabase-issued aal2 always counts as a completed authenticator check.
+  const assurance=await cloud.sb.auth.mfa.getAuthenticatorAssuranceLevel();
+  if(assurance.error)throw assurance.error;
+  const totpVerified=assurance.data?.currentLevel==='aal2';
+  let emailVerified=false;
+  if(!totpVerified){
+   const {data,error}=await cloud.sb.functions.invoke('trend-email-2fa',{body:{action:'status'}});
+   if(error)throw error;
+   if(data?.error)throw Error(data.error);
+   emailVerified=Boolean(data?.verified);
+  }
   if(!cloud.user)return;
-  if(data?.verified){
-   const unlock=!cloud.mfaReady;cloud.mfaReady=true;
-   if(unlock){closeModal();await loadCloud();toast('Email code verified — workspace unlocked');}
+  if(totpVerified||emailVerified){
+   const unlock=!cloud.mfaReady;
+   cloud.mfaReady=true;
+   if(unlock){closeModal();await loadCloud();toast(totpVerified?'Authenticator verified — workspace unlocked':'Email code verified — workspace unlocked');}
   }else{
    cloud.mfaReady=false;showEmailFactor();
    if(!emailSentAt)queueMicrotask(()=>sendEmailFactorCode());
   }
  }catch(e){
-  cloud.mfaReady=false;cloud.syncInfo='Email security check: '+e.message;
+  cloud.mfaReady=false;cloud.syncInfo='Second-factor security check: '+(e.message||String(e));
   showEmailFactor();emailCodeStatus(cloud.syncInfo);
  }finally{cloud.mfaChecking=false;}
-};
+}
 async function verifyEmailFactor(form){
  if(!cloud.user||emailBusy)return;
  const code=String(new FormData(form).get('code')||'').trim();
@@ -568,7 +662,9 @@ document.addEventListener('change',async e=>{if(e.target?.id!=='import-cloud-wor
 document.addEventListener('change',e=>{if(e.target?.id!=='creator-niche')return;
  const area=document.getElementById('creator-topic-grid');if(area)area.innerHTML=setupTopics(e.target.value,[]);
 });
-document.addEventListener('submit',e=>{if(e.target?.id==='creator-profile-form'){e.preventDefault();saveCreatorProfile(e.target);return;}if(e.target?.id==='cloud-auth-form'){e.preventDefault();const f=new FormData(e.target);if(cloud.authMode==='register'&&f.get('password')!==f.get('confirm'))return toast('Passwords do not match.');authSubmit(e.target);}if(e.target?.id==='email-factor-form'){e.preventDefault();verifyEmailFactor(e.target);}if(e.target?.id==='cloud-recovery-form'){e.preventDefault();const pass=String(new FormData(e.target).get('password')||'');if(pass.length<12)return toast('Password must be at least 12 characters');cloud.sb.auth.updateUser({password:pass}).then(({error})=>{if(error)toast(error.message);else{cloud.recovery=false;cloud.syncInfo='Password updated. You can use it on other devices.';render();toast('Password updated');}});}},true);
+document.addEventListener('submit',e=>{if(e.target?.id==='creator-profile-form'){e.preventDefault();saveCreatorProfile(e.target);return;}if(e.target?.id==='cloud-auth-form'){e.preventDefault();const f=new FormData(e.target);if(cloud.authMode==='register'&&f.get('password')!==f.get('confirm'))return toast('Passwords do not match.');authSubmit(e.target);}if(e.target?.id==='email-factor-form'){e.preventDefault();verifyEmailFactor(e.target);}
+ if(e.target?.id==='totp-factor-form'){e.preventDefault();verifyAuthenticator(e.target);}
+ if(e.target?.id==='cloud-recovery-form'){e.preventDefault();const pass=String(new FormData(e.target).get('password')||'');if(pass.length<12)return toast('Password must be at least 12 characters');cloud.sb.auth.updateUser({password:pass}).then(({error})=>{if(error)toast(error.message);else{cloud.recovery=false;cloud.syncInfo='Password updated. You can use it on other devices.';render();toast('Password updated');}});}},true);
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
  if(b.dataset.cloud){if(b.dataset.cloud==='close-modal'){closeModal();return;}accountAction(b.dataset.cloud);return;}
  if(b.dataset.creator==='edit'){showCreatorSetup();return;}
