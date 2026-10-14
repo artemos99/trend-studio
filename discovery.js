@@ -17,7 +17,7 @@ const colors=new Set(['color','colors','colour','colours','pink','red','blue','b
 const gameWords=new Set(['challenge','challenges','vs','versus','battle','compete','competition','contest','team','teams','race','only','choose','chooses','pick','picks','swap','swaps','switch','switching','last','wins','win','build','building','24','survive','hide','seek']);
 const similarTerms={colors:'color',colours:'color',colour:'color',challenges:'challenge',competing:'competition',competitions:'competition',vs:'versus',challenges:'challenge',hiding:'hide',hidden:'hide',seeking:'seek',boxes:'box',mysteries:'mystery'};
 const canonical=t=>similarTerms[t]||t;
-const D={query:'',searched:'',results:[],loading:false,error:'',next:null,pages:0,fetchedAt:0,sort:'relevance',minViews:0,minSubs:0,days:0,region:'US',language:'',strict:true,searchOrder:'relevance',selected:null,related:[],relatedLoading:false,relatedError:'',visualAttempted:false,visualCount:0,request:0,cache:new Map(),detailRequest:0};
+const D={query:'',searched:'',results:[],loading:false,error:'',next:null,pages:0,fetchedAt:0,sort:'relevance',minViews:0,minSubs:0,days:0,region:'',language:'',strict:true,searchOrder:'relevance',selected:null,related:[],relatedLoading:false,relatedError:'',visualAttempted:false,visualCount:0,request:0,cache:new Map(),detailRequest:0};
 const fingerprintCache=new Map();
 const defaultTheme=()=>bridge()?.creatorProfile()?.topics?.[0]||'color challenge';
 
@@ -128,7 +128,7 @@ function radarView(){
  '<label>Published<select class="field" data-world-filter="days">'+option([['0','Any time'],['7','Last 7 days'],['30','Last 30 days'],['90','Last 90 days'],['365','Last 12 months']],D.days)+'</select></label>'+
  '<label>Minimum views<select class="field" data-world-filter="minViews">'+option([['0','Any'],['10000','10K+'],['100000','100K+'],['1000000','1M+'],['10000000','10M+']],D.minViews)+'</select></label>'+
  '<label>Channel subscribers<select class="field" data-world-filter="minSubs">'+option([['0','Any'],['10000','10K+'],['100000','100K+'],['1000000','1M+'],['10000000','10M+']],D.minSubs)+'</select></label>'+
- '<label>Search region<select class="field" data-world-filter="region">'+option([['US','United States'],['GB','United Kingdom'],['CA','Canada'],['IN','India'],['BR','Brazil'],['MX','Mexico'],['DE','Germany'],['AU','Australia']],D.region)+'</select></label>'+
+ '<label>Search region<select class="field" data-world-filter="region">'+option([['','Worldwide · all regions'],['US','United States'],['GB','United Kingdom'],['CA','Canada'],['IN','India'],['BR','Brazil'],['MX','Mexico'],['DE','Germany'],['AU','Australia']],D.region)+'</select></label>'+
  '<label>Video language<select class="field" data-world-filter="language">'+option([['','Any'],['en','English'],['es','Spanish'],['ru','Russian'],['pt','Portuguese'],['de','German'],['fr','French'],['hi','Hindi']],D.language)+'</select></label>'+
  '<label>Search order<select class="field" data-world-filter="searchOrder">'+option([['relevance','YouTube relevance'],['viewCount','YouTube most viewed'],['date','Latest uploaded']],D.searchOrder)+'</select></label>'+
  '<label class="world-toggle"><input type="checkbox" id="world-strict" '+(D.strict?'checked':'')+'> Strict theme matching</label></div>'+
