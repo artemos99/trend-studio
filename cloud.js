@@ -314,7 +314,7 @@ async function sendEmailFactorCode(){
  if(emailSentAt&&remaining>0)return emailCodeStatus('Wait '+Math.ceil(remaining/1000)+' seconds before resending.');
  emailBusy=true;emailCodeStatus('Sending a six-digit code…');
  try{
-  const {error}=await emailCodeClient().auth.signInWithOtp({email:cloud.user.email,options:{shouldCreateUser:false}});
+  const {error}=await emailCodeClient().auth.signInWithOtp({email:cloud.user.email,options:{shouldCreateUser:false,emailRedirectTo:location.origin+location.pathname}});
   if(error)throw error;
   emailSentAt=Date.now();emailCodeStatus('Check your inbox and spam folder for a six-digit code. If you receive a clickable link instead, choose Authenticator app or ask the admin to change the Supabase Magic Link template to use {{ .Token }}.');
  }catch(e){emailCodeStatus('Email could not be sent: '+e.message);}
