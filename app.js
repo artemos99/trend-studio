@@ -48,7 +48,26 @@ const timeAgo=days=>days<1?'today':Math.floor(days)+'d ago';
 const agoDate=d=>new Date(Date.now()-d*86400000).toISOString();
 const todayString=()=>new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
 const palette=['#9270db','#d46c92','#699ce7','#85bba7','#d2a15e','#c16d84','#9a83bd','#9cab68'];
-function matchTopic(title){const s=title.toLowerCase();return TOPICS.find(t=>t.words.some(w=>s.includes(w)))?.name||'Other';}
+function matchTopic(title){
+ const text=String(title||'').toLowerCase(),words=text.match(/[a-zа-яё0-9]+/gi)||[];
+ const wordset=new Set(words),has=arr=>arr.some(x=>wordset.has(x));
+ return TOPICS.find(t=>{
+  const name=String(t.name||'').toLowerCase();
+  // Color is a common description, not a format. Don't label an unrelated
+  // colored object as a color challenge without a challenge/versus cue.
+  if(/\b(colou?r|colors?|pink|rainbow)\b/.test(name)){
+   const color=has(['color','colors','colour','colours','pink','black','red','blue','purple','green','yellow','orange','rainbow','white']);
+   const action=has(['challenge','challenges','vs','versus','battle','contest','competition','team','teams','last','wins','win','24','only','swap','swapped','race']);
+   return color&&action;
+  }
+  if(name.includes('hide')&&name.includes('seek'))return has(['hide','hiding','hidden'])&&has(['seek','seeking']);
+  return (t.words||[]).some(w=>{
+   const term=String(w||'').toLowerCase();
+   // Respect word boundaries instead of matching "red" inside "hundred".
+   return term.split(/\s+/).every(word=>wordset.has(word));
+  });
+ })?.name||'Other';
+}
 function videoAge(v){return Math.max(.2,(Date.now()-new Date(v.publishedAt).getTime())/86400000)}
 function normalizeVideos(videos){const vv=videos.map(v=>({...v,topic:matchTopic(v.title),age:videoAge(v),pace:(v.views||0)/videoAge(v)}));const byChannel={};for(const v of vv)(byChannel[v.channel]??=[]).push(v.pace);for(const v of vv){const base=median(byChannel[v.channel]);v.outlier=base>0?Math.max(.1,Math.min(99,v.pace/base)):1;}return vv}
 function makeDemo(){return normalizeVideos(DEMO_VIDEOS.map(([title,channel,age,views,likes,duration,emoji,topic],i)=>({id:'demo-'+i,title,channel,age,views,likes,duration:duration*60,emoji,topic,publishedAt:agoDate(age),subscribers:0,source:'demo'})))}
