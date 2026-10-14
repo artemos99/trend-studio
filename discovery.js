@@ -17,7 +17,7 @@ const colors=new Set(['color','colors','colour','colours','pink','red','blue','b
 const gameWords=new Set(['challenge','challenges','vs','versus','battle','compete','competition','contest','team','teams','race','only','choose','chooses','pick','picks','swap','swaps','switch','switching','last','wins','win','build','building','24','survive','hide','seek']);
 const similarTerms={colors:'color',colours:'color',colour:'color',challenges:'challenge',competing:'competition',competitions:'competition',vs:'versus',challenges:'challenge',hiding:'hide',hidden:'hide',seeking:'seek',boxes:'box',mysteries:'mystery'};
 const canonical=t=>similarTerms[t]||t;
-const D={query:'',searched:'',results:[],loading:false,error:'',next:null,pages:0,fetchedAt:0,sort:'relevance',minViews:0,minSubs:0,days:0,region:'',language:'',strict:true,searchOrder:'relevance',selected:null,related:[],relatedLoading:false,relatedError:'',visualAttempted:false,visualCount:0,request:0,pending:false,cache:new Map(),detailRequest:0};
+const D={query:'',searched:'',results:[],loading:false,error:'',next:null,pages:0,fetchedAt:0,sort:'relevance',format:'all',length:'all',minViews:0,maxViews:0,minSubs:0,maxSubs:0,minEngagement:0,days:0,region:'',language:'',strict:true,searchOrder:'relevance',selected:null,related:[],relatedLoading:false,relatedError:'',visualAttempted:false,visualCount:0,request:0,pending:false,cache:new Map(),detailRequest:0};
 const fingerprintCache=new Map();
 const defaultTheme=()=>bridge()?.creatorProfile()?.topics?.[0]||'color challenge';
 
@@ -51,19 +51,57 @@ function relevance(v,theme){
  return {valid,score,matched:want.filter(w=>all.has(w)),why:title.includes(q)?'Title matches exact theme':tags.includes(q)?'Matching video tags':want.filter(w=>ts.has(w)).length?'Relevant title keywords':'Relevant description and tags'};
 }
 function enriched(v){return {...v,_rel:relevance(v,D.searched||D.query),_pace:pace(v)};}
+// The Data API reports video duration, not whether YouTube classified it as
+// a Short. Portrait orientation and YouTube's actual Short flag are unavailable.
+function videoFormat(v){
+ const n=Number(v.duration);
+ return !Number.isFinite(n)||n<=0?'unknown':n<=180?'shortCandidate':'longForm';
+}
+function durationMatches(v,bucket){
+ const n=Number(v.duration);
+ if(bucket==='all')return true;
+ if(!Number.isFinite(n)||n<=0)return false;
+ return bucket==='under60'?n<=60:
+  bucket==='60to180'?n>60&&n<=180:
+  bucket==='180to600'?n>180&&n<=600:
+  bucket==='600to1200'?n>600&&n<=1200:
+  bucket==='over1200'?n>1200:false;
+}
+function videoFormatLabel(v){
+ const kind=videoFormat(v);
+ return kind==='shortCandidate'?'Likely Short · duration only':
+  kind==='longForm'?'Over 3 min · standard video':'Format unavailable';
+}
 function visibleVideos(){
- let rows=D.results.map(enriched).filter(v=>(!D.strict||v._rel.valid)&&Number(v.views)>=D.minViews&& (D.minSubs===0||Number(v.subscriberCount)>=D.minSubs));
+ let rows=D.results.map(enriched).filter(v=>{
+  if(D.strict&&!v._rel.valid)return false;
+  if(!durationMatches(v,D.length))return false;
+  if(D.format!=='all'&&videoFormat(v)!==D.format)return false;
+  const views=Number(v.views)||0,subs=v.subscriberCount==null?null:Number(v.subscriberCount);
+  if(views<D.minViews||(D.maxViews>0&&views>D.maxViews))return false;
+  if((D.minSubs>0&&(!Number.isFinite(subs)||subs<D.minSubs))||
+     (D.maxSubs>0&&(!Number.isFinite(subs)||subs>D.maxSubs)))return false;
+  if(D.minEngagement>0&&(!views||((Number(v.likes)||0)/views)*100<D.minEngagement))return false;
+  return true;
+ });
  if(D.days)rows=rows.filter(x=>agoDays(x)<=D.days+1);
  if(D.sort==='views')rows.sort((a,b)=>b.views-a.views);
  else if(D.sort==='subscribers')rows.sort((a,b)=>(b.subscriberCount??-1)-(a.subscriberCount??-1));
  else if(D.sort==='pace')rows.sort((a,b)=>b._pace-a._pace);
  else if(D.sort==='newest')rows.sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt));
  else if(D.sort==='engagement')rows.sort((a,b)=>(b.likes/Math.max(1,b.views))-(a.likes/Math.max(1,a.views)));
+ else if(D.sort==='outlier')rows.sort((a,b)=>
+  (b.subscriberCount>0?b.views/b.subscriberCount:-1)-
+  (a.subscriberCount>0?a.views/a.subscriberCount:-1));
+ else if(D.sort==='likes')rows.sort((a,b)=>b.likes-a.likes);
  else rows.sort((a,b)=>b._rel.score-a._rel.score||b.views-a.views);
  return rows;
 }
 function opts(){
- return {days:D.days,region:D.region,language:D.language,order:D.searchOrder};
+ const shortOnly=D.format==='shortCandidate'||D.length==='under60'||D.length==='60to180';
+ const longOnly=D.format==='longForm'&&D.length==='over1200'||D.length==='over1200';
+ return {days:D.days,region:D.region,language:D.language,order:D.searchOrder,
+  videoDuration:shortOnly?'short':longOnly?'long':''};
 }
 async function globalSearch(more=false){
  if(!bridge()?.connected())return toast('Connect YouTube to search the public YouTube catalog.');
@@ -101,13 +139,15 @@ function videoCard(v){
  const theme=String(D.searched||D.query),r=relevance(v,theme);
  return '<article class="world-video">'+
  '<button type="button" class="world-cover" data-world-video="'+esc(v.id)+'" aria-label="Open analysis of '+esc(v.title)+'">'+
- '<img src="'+ytThumb(v)+'" loading="lazy" alt="YouTube thumbnail: '+esc(v.title)+'"><span class="world-duration">'+minutes(v.duration)+'</span></button>'+
+ '<img src="'+ytThumb(v)+'" loading="lazy" alt="YouTube thumbnail: '+esc(v.title)+'"><span class="world-duration">'+(Number(v.duration)>0?minutes(v.duration):'—')+'</span>'+
+ '<span class="world-format-tag">'+(videoFormat(v)==='shortCandidate'?'SHORT?':videoFormat(v)==='longForm'?'VIDEO':'UNKNOWN')+'</span></button>'+
  '<div class="world-content"><div class="world-creator">'+(v.channelAvatar?'<img src="'+esc(v.channelAvatar)+'" alt="" loading="lazy">':'<span class="world-creator-avatar">▶</span>')+
  '<b>'+esc(v.channel)+'</b><span>'+ (v.subscriberCount===null?'Hidden subscribers':labelNumber(v.subscriberCount)+' subscribers')+'</span></div>'+
  '<button type="button" class="world-title" data-world-video="'+esc(v.id)+'">'+esc(v.title)+'</button>'+
  '<p class="world-excerpt">'+esc((v.description||'').replace(/\s+/g,' ').slice(0,140)||'Description not provided by creator')+'</p>'+
  '<div class="world-stats"><b>'+labelNumber(v.views)+' <small>views</small></b><b>'+labelNumber(v._pace)+' <small>avg views/day</small></b><b>'+labelNumber(v.likes)+' <small>likes</small></b></div>'+
  '<div class="world-signals"><span class="'+(r.valid?'world-good':'')+'">'+(r.valid?'✓ Strong theme match':'◷ Broad YouTube match')+'</span><span>'+esc(formatDate(v.publishedAt))+'</span></div>'+
+ '<div class="world-format-note">'+esc(videoFormatLabel(v))+'</div>'+
  pills(v)+'<div class="world-actions"><button type="button" class="btn btn-primary" data-world-video="'+esc(v.id)+'">Analyze + similar thumbnails ↗</button>'+
  '<a href="https://www.youtube.com/watch?v='+v.id+'" target="_blank" rel="noopener noreferrer" class="btn btn-outline">YouTube ↗</a></div></div></article>';
 }
@@ -124,15 +164,21 @@ function radarView(){
  '<button type="submit" class="btn btn-primary" '+(!connected||D.loading?'disabled':'')+'>'+(D.loading?'Searching…':'⌕ Search all YouTube')+'</button></form>'+
  '<div class="world-quick">'+quick.map(q=>'<button class="pill" data-world-chip="'+esc(q)+'" type="button">'+esc(q)+'</button>').join('')+'</div>'+
  (!connected?'<p class="world-warning">Connect your YouTube account to search YouTube-wide. You do not need to add channels to your watchlist. <button class="panel-link" data-go="youtube">Connect now ↗</button></p>':'')+
- '<div class="world-controls"><label>Sort by<select class="field" data-world-filter="sort">'+option([['relevance','Best theme match'],['views','Most views'],['subscribers','Most channel subscribers'],['pace','Fast-growing estimate · avg views/day'],['newest','Newest'],['engagement','Highest likes per view']],D.sort)+'</select></label>'+
+ '<div class="world-controls"><label>Sort by<select class="field" data-world-filter="sort">'+option([['relevance','Best theme match'],['views','Most views'],['subscribers','Most channel subscribers'],['pace','Fast-growing estimate · avg views/day'],['newest','Newest'],['engagement','Highest likes per view'],['likes','Most likes'],['outlier','Highest views / subscribers']],D.sort)+'</select></label>'+
  '<label>Published<select class="field" data-world-filter="days">'+option([['0','Any time'],['7','Last 7 days'],['30','Last 30 days'],['90','Last 90 days'],['365','Last 12 months']],D.days)+'</select></label>'+
  '<label>Minimum views<select class="field" data-world-filter="minViews">'+option([['0','Any'],['10000','10K+'],['100000','100K+'],['1000000','1M+'],['10000000','10M+']],D.minViews)+'</select></label>'+
  '<label>Channel subscribers<select class="field" data-world-filter="minSubs">'+option([['0','Any'],['10000','10K+'],['100000','100K+'],['1000000','1M+'],['10000000','10M+']],D.minSubs)+'</select></label>'+
  '<label>Search region<select class="field" data-world-filter="region">'+option([['','Worldwide · all regions'],['US','United States'],['GB','United Kingdom'],['CA','Canada'],['IN','India'],['BR','Brazil'],['MX','Mexico'],['DE','Germany'],['AU','Australia']],D.region)+'</select></label>'+
  '<label>Video language<select class="field" data-world-filter="language">'+option([['','Any'],['en','English'],['es','Spanish'],['ru','Russian'],['pt','Portuguese'],['de','German'],['fr','French'],['hi','Hindi']],D.language)+'</select></label>'+
+ '<label>Video type<select class="field" data-world-filter="format">'+option([['all','All formats'],['shortCandidate','Likely Shorts · up to 3 min'],['longForm','Videos · over 3 min']],D.format)+'</select></label>'+
+ '<label>Video length<select class="field" data-world-filter="length">'+option([['all','Any duration'],['under60','Up to 60 seconds'],['60to180','1–3 minutes'],['180to600','3–10 minutes'],['600to1200','10–20 minutes'],['over1200','Over 20 minutes']],D.length)+'</select></label>'+
+ '<label>Maximum views<select class="field" data-world-filter="maxViews">'+option([['0','No maximum'],['10000','Under 10K'],['100000','Under 100K'],['1000000','Under 1M'],['10000000','Under 10M']],D.maxViews)+'</select></label>'+
+ '<label>Maximum subscribers<select class="field" data-world-filter="maxSubs">'+option([['0','No maximum'],['10000','Under 10K'],['100000','Under 100K'],['1000000','Under 1M'],['10000000','Under 10M']],D.maxSubs)+'</select></label>'+
+ '<label>Minimum likes / views<select class="field" data-world-filter="minEngagement">'+option([['0','Any'],['1','1%+'],['3','3%+'],['5','5%+'],['10','10%+']],D.minEngagement)+'</select></label>'+
  '<label>Search order<select class="field" data-world-filter="searchOrder">'+option([['relevance','YouTube relevance'],['viewCount','YouTube most viewed'],['date','Latest uploaded']],D.searchOrder)+'</select></label>'+
- '<label class="world-toggle"><input type="checkbox" id="world-strict" '+(D.strict?'checked':'')+'> Strict theme matching</label></div>'+
- '<p class="world-hint">Topic matching checks titles, descriptions and available tags. “Fast-growing” is estimated from lifetime views ÷ video age—not actual hourly growth. Search is sampled and paginated, not an exhaustive list of all YouTube videos.</p></div>'+
+ '<label class="world-toggle"><input type="checkbox" id="world-strict" '+(D.strict?'checked':'')+'> Strict theme matching</label>'+
+ '<button type="button" class="btn btn-outline world-reset" data-world-reset>Reset filters</button></div>'+
+ '<p class="world-hint"><b>Shorts:</b> “Likely Shorts” means videos with a duration of 3 minutes or less, not a confirmed Shorts designation; vertical framing is not available from the public API. Format, views, size and engagement filters apply to the returned search sample. “Fast-growing” is lifetime views ÷ video age, not real-time growth. YouTube searches are paginated and quota-limited.</p></div>'+
  (D.error?'<div class="world-error">'+esc(D.error)+'</div>':'')+
  '<div class="world-result-head"><div><h3>'+(hasResults?rows.length+' strong results from '+D.results.length+' indexed videos':'Explore a worldwide topic')+'</h3>'+
  '<p>'+(D.loading?'Fetching YouTube metadata and channel statistics…':hasResults?'Results from '+esc(D.searched)+' · Updated '+new Date(D.fetchedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'Select a suggested theme above, or enter your own search.')+'</p></div>'+
@@ -147,6 +193,8 @@ function helpPanel(){
  openModal('<div class="video-detail world-detail"><button type="button" class="modal-x" data-cloud="close-modal" aria-label="Close">×</button><h2>How Global Radar ranks videos</h2>'+
  '<p>Search results come from YouTube Data API v3. For each video, the app requests title, description, published date, public views/likes, any available creator tags, and channel subscriber counts.</p>'+
  '<p><strong>Strict topic relevance</strong> requires matching theme terms in the title or tags. For color challenges, it also checks color concepts plus competition or challenge words, excluding unrelated videos that merely mention a color.</p>'+
+ '<p><strong>Likely Shorts</strong> are approximated by public video duration (3 minutes or less). YouTube does not expose a definitive Shorts flag or video orientation in these API responses. “Videos over 3 min” is a duration filter, not a YouTube classification.</p>'+
+ '<p><strong>Views per subscriber</strong> is public video views divided by channel subscriber count, a rough comparison rather than a recommendation score. Hidden subscriber counts cannot be ranked this way.</p>'+
  '<p><strong>Fast-growing estimate</strong> is lifetime public views divided by time since publication. This is not the real YouTube Studio hourly velocity and does not prove that views are accelerating.</p>'+
  '<p><strong>Visual thumbnail matching</strong> compares downsampled image patterns and color composition for a small sample of topic-matched candidates. It is an approximate perceptual ranking, not the same AI embedding or image search technology that YouTube might use internally.</p>'+
  '<p>Public APIs do not reveal CTR, watch-time retention, impression counts, or exact live subscriber increments for other creators. YouTube search is quota-limited, so results are sampled.</p></div>');
@@ -168,6 +216,7 @@ function detailMarkup(v){
  '<div><strong>'+labelNumber(v.subscriberCount)+'</strong><small>channel subscribers</small></div>'+
  '<div><strong>'+labelNumber(pace(v))+'</strong><small>lifetime avg views/day</small></div>'+
  '<div><strong>'+labelNumber(v.likes)+'</strong><small>likes</small></div></div></div>'+
+ '<p class="world-hint">Video type: '+esc(videoFormatLabel(v))+' · Duration: '+(Number(v.duration)>0?minutes(v.duration):'Unknown')+'</p>'+
  '<div class="world-detail-actions"><a class="btn btn-outline" href="https://www.youtube.com/watch?v='+v.id+'" target="_blank" rel="noopener noreferrer">▶ Watch on YouTube ↗</a>'+
  '<button type="button" class="btn btn-primary" data-world-save="'+v.id+'">＋ Save as idea</button></div>'+
  '<details class="world-metadata"><summary>Analyze title, description and tags</summary>'+
@@ -316,9 +365,9 @@ document.addEventListener('submit',event=>{
 document.addEventListener('change',event=>{
  const e=event.target,k=e.dataset?.worldFilter;
  if(k){
-  const numeric=new Set(['minViews','minSubs','days']);
+  const numeric=new Set(['minViews','maxViews','minSubs','maxSubs','minEngagement','days']);
   D[k]=numeric.has(k)?Number(e.value):e.value;
-  if(['days','region','language','searchOrder'].includes(k)){D.pages=0;D.results=[];D.next=null;D.error='';render();if(bridge()?.connected())void globalSearch();}
+  if(['days','region','language','searchOrder','format','length'].includes(k)){D.pages=0;D.results=[];D.next=null;D.error='';render();if(bridge()?.connected())void globalSearch();}
   else render();
  }
  if(e.id==='world-strict'){D.strict=e.checked;render();}
@@ -330,9 +379,14 @@ document.addEventListener('click',event=>{
   if(bridge()?.connected())void globalSearch();
  }
  if(b.dataset.worldMore!==undefined)void globalSearch(true);
+ if(b.dataset.worldReset!==undefined){
+  Object.assign(D,{sort:'relevance',format:'all',length:'all',minViews:0,maxViews:0,minSubs:0,maxSubs:0,minEngagement:0,days:0,region:'',language:'',strict:true,searchOrder:'relevance'});
+  D.pages=0;D.results=[];D.next=null;D.error='';
+  render();if(bridge()?.connected())void globalSearch(false);
+ }
  if(b.dataset.worldHelp!==undefined)helpPanel();
  if(b.dataset.worldVideo!==undefined)showDetail(b.dataset.worldVideo);
  if(b.dataset.worldSave!==undefined)saveWorldIdea(b.dataset.worldSave);
 });
-const style=document.createElement('style');style.textContent=String.raw`.world-search{padding:23px;margin:6px 0 22px}.world-topline,.world-result-head{display:flex;justify-content:space-between;gap:15px;align-items:start;flex-wrap:wrap}.world-topline strong{font-size:17px}.world-topline p,.world-result-head p{margin:5px 0;color:#a8b6cc;font-size:12px}.world-search-form{display:flex;gap:9px;margin:18px 0 10px}.world-search-form input{flex:1;min-width:0}.world-search-form button{min-width:175px}.world-quick{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 22px}.world-quick button{font-size:12px;padding:8px 11px}.world-controls{border-top:1px solid #344057;padding-top:15px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}.world-controls label{font-size:11px;color:#aab8cc;display:flex;flex-direction:column;gap:6px}.world-controls .field{width:100%;min-width:0;font-size:12px}.world-controls .world-toggle{flex-direction:row;align-items:center;gap:8px;padding:15px 0 0;color:#e3daff}.world-toggle input{accent-color:#aa8cff;width:17px;height:17px}.world-hint{margin:14px 0 0;font-size:11px;color:#9aabc0;line-height:1.5}.world-warning,.world-error{padding:12px 15px;border-radius:10px;margin:12px 0;background:#382c36;border:1px solid #6b495b;color:#ffdad6;font-size:12px}.world-result-head{margin:18px 0 13px}.world-result-head h3{font-size:19px;margin:0}.world-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(286px,1fr));gap:14px}.world-video{background:#141f32;border:1px solid #303c54;border-radius:14px;overflow:hidden;transition:border-color .15s,transform .15s;display:flex;flex-direction:column}.world-video:hover{border-color:#7f75aa;transform:translateY(-2px)}.world-cover{display:block;border:0;background:#0b1121;padding:0;cursor:pointer;position:relative;width:100%;aspect-ratio:16/9}.world-cover img{width:100%;height:100%;object-fit:cover}.world-duration{position:absolute;right:9px;bottom:8px;padding:3px 5px;background:#080e17d9;border-radius:5px;color:#fff;font-size:11px}.world-content{padding:13px 15px 16px;display:flex;flex-direction:column;gap:10px;flex:1}.world-creator{display:flex;align-items:center;gap:7px;color:#b7c6dd;font-size:11px;flex-wrap:wrap}.world-creator img,.world-creator-avatar{height:25px;width:25px;border-radius:50%;object-fit:cover;background:#52426e;display:grid;place-items:center;flex-shrink:0}.world-creator b{font-size:12px;color:#e8ecfb}.world-creator>span:not(.world-creator-avatar){margin-left:auto}.world-title{border:0;background:transparent;color:#f5f4ff;font-size:15px;line-height:1.3;font-weight:700;text-align:left;padding:0;cursor:pointer}.world-title:hover{color:#c2b0ff}.world-excerpt{font-size:11px;color:#a5b4ca;margin:0;max-height:2.8em;overflow:hidden;line-height:1.4}.world-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;background:#1e2a40;border-radius:9px;padding:11px 8px}.world-stats b{font-size:15px;white-space:nowrap}.world-stats small{display:block;color:#a6b9d1;font-size:10px;font-weight:400;margin-top:4px}.world-signals{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#a8b9cb;font-size:10px}.world-good{color:#9ce7d0}.world-tags{display:flex;flex-wrap:wrap;gap:5px}.world-tags span{padding:4px 7px;border-radius:6px;background:#29334d;color:#b7bfe1;font-size:10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.world-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:auto}.world-actions .btn{font-size:11px;padding:9px 10px}.world-placeholder{text-align:center;padding:54px 18px;border:1px dashed #41506c;border-radius:14px;color:#aabbd0;background:#111c2d}.world-load{text-align:center;padding:24px}.world-load small{display:block;color:#95a8c2;margin-top:8px}.world-detail{max-width:940px}.world-detail>h2{line-height:1.25}.world-detail-top{display:grid;grid-template-columns:minmax(210px,1.2fr) 1fr;gap:15px;margin:16px 0}.world-detail-top>img{width:100%;aspect-ratio:16/9;border-radius:11px;object-fit:cover}.world-detail-insights{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.world-detail-insights>div{background:#1b2840;border:1px solid #3b465e;border-radius:9px;padding:12px}.world-detail-insights strong{display:block;font-size:19px}.world-detail-insights small{font-size:11px;color:#b0bed4}.world-detail-actions{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}.world-match-breakdown{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.world-match-breakdown>div{background:#202c43;border:1px solid #394964;padding:10px;border-radius:8px}.world-match-breakdown small,.world-match-breakdown b,.world-match-breakdown span{display:block;font-size:11px;margin-top:4px}.world-match-breakdown span{color:#aab6d4}.world-metadata{border-top:1px solid #3d4862;padding:13px 0;margin:15px 0}.world-metadata summary{cursor:pointer;font-weight:600}.world-metadata p{white-space:pre-line;overflow-wrap:anywhere;color:#b0bed3;font-size:12px}.world-similar-head{border-top:1px solid #3d4862;padding-top:16px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}.world-similar-head h3{margin:0}.world-similar-head small{color:#9dabc1}.world-related-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:11px;margin:12px 0}.world-related-video{border:1px solid #384762;border-radius:9px;background:#1b2840;color:#eaf0ff;padding:8px;text-align:left;cursor:pointer}.world-related-video:hover{border-color:#9a83ed}.world-related-video>img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:7px}.world-related-video b{display:block;font-size:11px;line-height:1.3;max-height:3.9em;overflow:hidden;margin:6px 0}.world-related-video>span{display:block;font-size:10px;color:#abbad2;margin-top:3px}.world-related-video .world-image-match{color:#8adcc8;margin-top:7px}.world-visual-status{font-size:11px;color:#9ce6d1}.world-under-construction{padding:46px 24px;text-align:center;max-width:780px;margin:25px auto}.world-construction-symbol{font-size:72px;color:#b6a0e6;margin-bottom:15px}.world-under-construction h2{font-size:24px}.world-under-construction p{color:#acbbd2;max-width:580px;margin:15px auto;line-height:1.6}@media(max-width:900px){.world-controls{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:640px){.world-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.world-search{padding:15px}.world-search-form{flex-direction:column}.world-search-form button{width:100%}.world-detail-top{grid-template-columns:1fr}.world-match-breakdown{grid-template-columns:1fr}.world-video{max-width:none}.world-creator>span:not(.world-creator-avatar){margin-left:0}}`;document.head.append(style);
+const style=document.createElement('style');style.textContent=String.raw`.world-search{padding:23px;margin:6px 0 22px}.world-topline,.world-result-head{display:flex;justify-content:space-between;gap:15px;align-items:start;flex-wrap:wrap}.world-topline strong{font-size:17px}.world-topline p,.world-result-head p{margin:5px 0;color:#a8b6cc;font-size:12px}.world-search-form{display:flex;gap:9px;margin:18px 0 10px}.world-search-form input{flex:1;min-width:0}.world-search-form button{min-width:175px}.world-quick{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 22px}.world-quick button{font-size:12px;padding:8px 11px}.world-controls{border-top:1px solid #344057;padding-top:15px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}.world-controls label{font-size:11px;color:#aab8cc;display:flex;flex-direction:column;gap:6px}.world-controls .field{width:100%;min-width:0;font-size:12px}.world-controls .world-toggle{flex-direction:row;align-items:center;gap:8px;padding:15px 0 0;color:#e3daff}.world-toggle input{accent-color:#aa8cff;width:17px;height:17px}.world-hint{margin:14px 0 0;font-size:11px;color:#9aabc0;line-height:1.5}.world-warning,.world-error{padding:12px 15px;border-radius:10px;margin:12px 0;background:#382c36;border:1px solid #6b495b;color:#ffdad6;font-size:12px}.world-result-head{margin:18px 0 13px}.world-result-head h3{font-size:19px;margin:0}.world-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(286px,1fr));gap:14px}.world-video{background:#141f32;border:1px solid #303c54;border-radius:14px;overflow:hidden;transition:border-color .15s,transform .15s;display:flex;flex-direction:column}.world-video:hover{border-color:#7f75aa;transform:translateY(-2px)}.world-cover{display:block;border:0;background:#0b1121;padding:0;cursor:pointer;position:relative;width:100%;aspect-ratio:16/9}.world-cover img{width:100%;height:100%;object-fit:cover}.world-format-tag{position:absolute;left:8px;top:8px;padding:5px 7px;background:#151b33ec;color:#eee3ff;border:1px solid #8b79c388;border-radius:5px;font-size:10px;font-weight:750;letter-spacing:.06em}.world-format-note{font-size:10px;color:#bfc3dd;margin:-2px 0 0}.world-reset{align-self:end;white-space:nowrap;min-height:41px}.world-duration{position:absolute;right:9px;bottom:8px;padding:3px 5px;background:#080e17d9;border-radius:5px;color:#fff;font-size:11px}.world-content{padding:13px 15px 16px;display:flex;flex-direction:column;gap:10px;flex:1}.world-creator{display:flex;align-items:center;gap:7px;color:#b7c6dd;font-size:11px;flex-wrap:wrap}.world-creator img,.world-creator-avatar{height:25px;width:25px;border-radius:50%;object-fit:cover;background:#52426e;display:grid;place-items:center;flex-shrink:0}.world-creator b{font-size:12px;color:#e8ecfb}.world-creator>span:not(.world-creator-avatar){margin-left:auto}.world-title{border:0;background:transparent;color:#f5f4ff;font-size:15px;line-height:1.3;font-weight:700;text-align:left;padding:0;cursor:pointer}.world-title:hover{color:#c2b0ff}.world-excerpt{font-size:11px;color:#a5b4ca;margin:0;max-height:2.8em;overflow:hidden;line-height:1.4}.world-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;background:#1e2a40;border-radius:9px;padding:11px 8px}.world-stats b{font-size:15px;white-space:nowrap}.world-stats small{display:block;color:#a6b9d1;font-size:10px;font-weight:400;margin-top:4px}.world-signals{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#a8b9cb;font-size:10px}.world-good{color:#9ce7d0}.world-tags{display:flex;flex-wrap:wrap;gap:5px}.world-tags span{padding:4px 7px;border-radius:6px;background:#29334d;color:#b7bfe1;font-size:10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.world-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:auto}.world-actions .btn{font-size:11px;padding:9px 10px}.world-placeholder{text-align:center;padding:54px 18px;border:1px dashed #41506c;border-radius:14px;color:#aabbd0;background:#111c2d}.world-load{text-align:center;padding:24px}.world-load small{display:block;color:#95a8c2;margin-top:8px}.world-detail{max-width:940px}.world-detail>h2{line-height:1.25}.world-detail-top{display:grid;grid-template-columns:minmax(210px,1.2fr) 1fr;gap:15px;margin:16px 0}.world-detail-top>img{width:100%;aspect-ratio:16/9;border-radius:11px;object-fit:cover}.world-detail-insights{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.world-detail-insights>div{background:#1b2840;border:1px solid #3b465e;border-radius:9px;padding:12px}.world-detail-insights strong{display:block;font-size:19px}.world-detail-insights small{font-size:11px;color:#b0bed4}.world-detail-actions{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}.world-match-breakdown{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.world-match-breakdown>div{background:#202c43;border:1px solid #394964;padding:10px;border-radius:8px}.world-match-breakdown small,.world-match-breakdown b,.world-match-breakdown span{display:block;font-size:11px;margin-top:4px}.world-match-breakdown span{color:#aab6d4}.world-metadata{border-top:1px solid #3d4862;padding:13px 0;margin:15px 0}.world-metadata summary{cursor:pointer;font-weight:600}.world-metadata p{white-space:pre-line;overflow-wrap:anywhere;color:#b0bed3;font-size:12px}.world-similar-head{border-top:1px solid #3d4862;padding-top:16px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}.world-similar-head h3{margin:0}.world-similar-head small{color:#9dabc1}.world-related-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:11px;margin:12px 0}.world-related-video{border:1px solid #384762;border-radius:9px;background:#1b2840;color:#eaf0ff;padding:8px;text-align:left;cursor:pointer}.world-related-video:hover{border-color:#9a83ed}.world-related-video>img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:7px}.world-related-video b{display:block;font-size:11px;line-height:1.3;max-height:3.9em;overflow:hidden;margin:6px 0}.world-related-video>span{display:block;font-size:10px;color:#abbad2;margin-top:3px}.world-related-video .world-image-match{color:#8adcc8;margin-top:7px}.world-visual-status{font-size:11px;color:#9ce6d1}.world-under-construction{padding:46px 24px;text-align:center;max-width:780px;margin:25px auto}.world-construction-symbol{font-size:72px;color:#b6a0e6;margin-bottom:15px}.world-under-construction h2{font-size:24px}.world-under-construction p{color:#acbbd2;max-width:580px;margin:15px auto;line-height:1.6}@media(max-width:900px){.world-controls{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:640px){.world-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.world-search{padding:15px}.world-search-form{flex-direction:column}.world-search-form button{width:100%}.world-detail-top{grid-template-columns:1fr}.world-match-breakdown{grid-template-columns:1fr}.world-video{max-width:none}.world-creator>span:not(.world-creator-avatar){margin-left:0}}`;document.head.append(style);
 })();
