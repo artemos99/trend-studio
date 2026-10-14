@@ -255,12 +255,20 @@ function compUpdateData(){const v=document.getElementById('comp-export-result');
 async function compRenderVideo(){
  if(comp.rendering)return;
  const clips=compSelected();if(!clips.length)return toast('Choose clips first.');
+  const invalid=clips.find(c=>{const file=compSource(c.src);return !file?.file||!Number.isFinite(c.start)||!Number.isFinite(c.end)||c.start<0||c.end>file.duration+.05||c.end-c.start<.5;});
+  if(invalid)return toast('One clip has an invalid time range or a missing source. Check the timeline before exporting.');
+  if(clips.length>90)return toast('Too many clips in this export. Reduce the timeline to 90 clips or fewer.');
  if(!comp.rights)return toast('Confirm you have rights to the source footage first.');
- if(!window.MediaRecorder||!HTMLCanvasElement.prototype.captureStream)return toast('This browser cannot render video. Try current Chrome or Edge.');
- const opts=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(x=>MediaRecorder.isTypeSupported(x));if(!opts)return toast('WebM encoding is unavailable in this browser.');
+ if(!window.MediaRecorder||!HTMLCanvasElement.prototype.captureStream)return toast('Browser video export is unavailable. Try the latest desktop Chrome or Edge.');
+  if(!document.getElementById('comp-preview-canvas'))return toast('Open the final review step before rendering.');
+ const high=comp.exportQuality==='1080',W=high?1920:1280,H=high?1080:720;
+  const codecs=high?['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']:['video/webm;codecs=vp8,opus','video/webm;codecs=vp9,opus','video/webm'];
+  const opts=codecs.find(x=>MediaRecorder.isTypeSupported(x));if(!opts)return toast('WebM encoding is unavailable in this browser.');
  compResultClear();comp.rendering=true;comp.renderPercent=0;comp.renderStatus='Preparing editor';compRefresh();
  let ctx=null,element=null,stream=null,recorder=null,objectURL=null,audio=null;const canvas=document.getElementById('comp-preview-canvas');
- const board=canvas.getContext('2d',{alpha:false});canvas.width=1280;canvas.height=720;
+ const board=canvas.getContext('2d',{alpha:false});
+  if(!board){comp.rendering=false;compRefresh();return toast('Canvas rendering is not available on this device.');}
+  canvas.width=W;canvas.height=H;
  const total=clips.reduce((a,c)=>a+c.end-c.start,0);let done=0;
  try{
   audio=new (window.AudioContext||window.webkitAudioContext)();
@@ -270,7 +278,7 @@ async function compRenderVideo(){
   const node=audio.createMediaElementSource(element),fadeGain=audio.createGain();node.connect(fadeGain);fadeGain.connect(destination);await audio.resume();
   const videoStream=canvas.captureStream(30);
   stream=new MediaStream([...videoStream.getVideoTracks(),...destination.stream.getAudioTracks()]);
-  const chunks=[];recorder=new MediaRecorder(stream,{mimeType:opts,videoBitsPerSecond:4000000,audioBitsPerSecond:128000});recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+  const chunks=[];recorder=new MediaRecorder(stream,{mimeType:opts,videoBitsPerSecond:high?8500000:4000000,audioBitsPerSecond:160000});recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
   const recorded=new Promise((resolve,reject)=>{recorder.onstop=resolve;recorder.onerror=e=>reject(new Error('MediaRecorder error'))});
   const seek=t=>new Promise((resolve,reject)=>{if(Math.abs(element.currentTime-t)<.04)return resolve();const timer=setTimeout(()=>reject(Error('Could not seek source video')),15000);element.addEventListener('seeked',()=>{clearTimeout(timer);resolve()},{once:true});element.currentTime=t});
   for(let i=0;i<clips.length;i++){
@@ -279,8 +287,8 @@ async function compRenderVideo(){
    objectURL=URL.createObjectURL(source.file);element.src=objectURL;element.load();
    await new Promise((resolve,reject)=>{if(element.readyState>=1)return resolve();const timer=setTimeout(()=>reject(Error('Source video did not load')),20000);element.addEventListener('loadedmetadata',()=>{clearTimeout(timer);resolve()},{once:true});element.addEventListener('error',()=>{clearTimeout(timer);reject(Error('Video codec not supported'))},{once:true})});
    await seek(clip.start);
-   const w=element.videoWidth||1280,h=element.videoHeight||720,scale=Math.max(1280/w,720/h),dw=w*scale,dh=h*scale;
-   board.fillStyle='#090f1c';board.fillRect(0,0,1280,720);board.drawImage(element,(1280-dw)/2,(720-dh)/2,dw,dh);
+   const w=element.videoWidth||W,h=element.videoHeight||H,scale=Math.max(W/w,H/h),dw=w*scale,dh=h*scale;
+   board.fillStyle='#090f1c';board.fillRect(0,0,W,H);board.drawImage(element,(W-dw)/2,(H-dh)/2,dw,dh);
    if(recorder.state==='inactive')recorder.start(1000);
    comp.renderStatus=`Clip ${i+1}/${clips.length}: ${source.name}`;
    await element.play();
@@ -289,12 +297,12 @@ async function compRenderVideo(){
     const tick=()=>{
      if(terminated)return;
      try{
-      board.fillStyle='#09111b';board.fillRect(0,0,1280,720);if(element.readyState>=2)board.drawImage(element,(1280-dw)/2,(720-dh)/2,dw,dh);
+      board.fillStyle='#09111b';board.fillRect(0,0,W,H);if(element.readyState>=2)board.drawImage(element,(W-dw)/2,(H-dh)/2,dw,dh);
       const pos=element.currentTime-clip.start;
       // Fast fades prevent harsh audio cuts and add a subtle visual dip.
       const cutFade=Math.max(0,Math.min(1,pos/.18,(clip.end-element.currentTime)/.18));
       fadeGain.gain.setTargetAtTime(cutFade,audio.currentTime,.016);
-      if(cutFade<1){board.fillStyle='rgba(3,8,18,'+(1-cutFade)+')';board.fillRect(0,0,1280,720);}
+      if(cutFade<1){board.fillStyle='rgba(3,8,18,'+(1-cutFade)+')';board.fillRect(0,0,W,H);}
       comp.renderPercent=Math.max(0,Math.min(99,((done+Math.max(0,pos))/total)*100));
       const fill=document.getElementById('comp-progress-fill');if(fill)fill.style.width=comp.renderPercent+'%';const txt=document.getElementById('comp-progress-text');if(txt)txt.textContent=comp.renderStatus+' · '+Math.round(comp.renderPercent)+'%';
       if(element.currentTime>=Math.min(clip.end,element.duration-.02)||element.ended){terminated=true;clearTimeout(timeout);element.pause();resolve();return}
@@ -305,7 +313,7 @@ async function compRenderVideo(){
    done+=clip.end-clip.start;
   }
   element.pause();recorder.stop();await recorded;
-  if(!chunks.length)throw Error('Browser produced an empty video.');
+  if(!chunks.length)throw Error('The browser produced an empty file. Try HD 720p in Chrome/Edge, and leave this tab visible during export.');
   comp.result=new Blob(chunks,{type:'video/webm'});comp.resultURL=URL.createObjectURL(comp.result);comp.renderPercent=100;toast('Your compilation is ready to download!');
  }catch(e){toast('Render failed: '+(e.message||String(e)));comp.renderStatus='Render failed: '+(e.message||String(e))}
  finally{if(element){element.pause();element.remove();element.removeAttribute('src');element.load()}if(objectURL)URL.revokeObjectURL(objectURL);if(recorder&&recorder.state!=='inactive')try{recorder.stop()}catch{}if(stream)stream.getTracks().forEach(t=>t.stop());if(audio)await audio.close().catch(()=>{});comp.rendering=false;compRefresh()}
