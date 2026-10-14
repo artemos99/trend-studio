@@ -280,13 +280,25 @@ async function compRenderVideo(){
   stream=new MediaStream([...videoStream.getVideoTracks(),...destination.stream.getAudioTracks()]);
   const chunks=[];recorder=new MediaRecorder(stream,{mimeType:opts,videoBitsPerSecond:high?8500000:4000000,audioBitsPerSecond:160000});recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
   const recorded=new Promise((resolve,reject)=>{recorder.onstop=resolve;recorder.onerror=e=>reject(new Error('MediaRecorder error'))});
-  const seek=t=>new Promise((resolve,reject)=>{if(Math.abs(element.currentTime-t)<.04)return resolve();const timer=setTimeout(()=>reject(Error('Could not seek source video')),15000);element.addEventListener('seeked',()=>{clearTimeout(timer);resolve()},{once:true});element.currentTime=t});
+  const seek=t=>new Promise((resolve,reject)=>{
+   if(Math.abs(element.currentTime-t)<.04)return resolve();
+   const timer=setTimeout(()=>reject(Error('Source could not seek to '+t.toFixed(1)+' seconds')),18000);
+   element.addEventListener('seeked',()=>{clearTimeout(timer);resolve()},{once:true});element.currentTime=t;
+  });
+  const frameReady=()=>new Promise((resolve,reject)=>{
+   if(element.readyState>=2&&element.videoWidth>0)return resolve();
+   const timer=setTimeout(()=>{cleanup();reject(Error('The video did not decode its first frame. Try another codec or file.'))},20000);
+   const ready=()=>{if(element.readyState>=2&&element.videoWidth>0){cleanup();resolve();}};
+   const bad=()=>{cleanup();reject(Error('Failed to decode source video. Try a standard H.264 MP4.'));};
+   const cleanup=()=>{clearTimeout(timer);element.removeEventListener('loadeddata',ready);element.removeEventListener('canplay',ready);element.removeEventListener('error',bad);};
+   element.addEventListener('loadeddata',ready);element.addEventListener('canplay',ready);element.addEventListener('error',bad);
+  });
   for(let i=0;i<clips.length;i++){
    const clip=clips[i],source=compSource(clip.src);if(!source)continue;
    if(objectURL){URL.revokeObjectURL(objectURL);objectURL=null}
    objectURL=URL.createObjectURL(source.file);element.src=objectURL;element.load();
    await new Promise((resolve,reject)=>{if(element.readyState>=1)return resolve();const timer=setTimeout(()=>reject(Error('Source video did not load')),20000);element.addEventListener('loadedmetadata',()=>{clearTimeout(timer);resolve()},{once:true});element.addEventListener('error',()=>{clearTimeout(timer);reject(Error('Video codec not supported'))},{once:true})});
-   await seek(clip.start);
+   await seek(clip.start);await frameReady();
    const w=element.videoWidth||W,h=element.videoHeight||H,scale=Math.max(W/w,H/h),dw=w*scale,dh=h*scale;
    board.fillStyle='#090f1c';board.fillRect(0,0,W,H);board.drawImage(element,(W-dw)/2,(H-dh)/2,dw,dh);
    if(recorder.state==='inactive')recorder.start(1000);
