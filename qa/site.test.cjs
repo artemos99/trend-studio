@@ -79,7 +79,7 @@ test('every tab renders with all browser modules loaded together',()=>{
   assert.ok(app.html().length>300,page+' is blank');
   assert.match(app.html(),/page-header/,page+' lacks a heading');
  }
- assert.match(app.html(),/channel analytics/i);
+ assert.match(app.html(),/FIRST-PARTY PERFORMANCE/i);
 });
 
 test('idea generation, production status and navigation are functional',()=>{
@@ -142,6 +142,7 @@ test('Radar analysis, saved ideas and account switch never crash',async()=>{
  const app=boot(),date=new Date().toISOString();
  app.window.TrendBridge={
   connected(){return true;},creatorProfile(){return{topics:['color challenge']};},
+  ownChannel(){return null;},ownVideos(){return [];},publicChannels(){return {};},
   async searchGlobalVideos(){return{videos:[{
    id:'abcdefghijk',title:'Color Challenge Pink vs Blue',description:'Teams compete in colors',
    tags:['challenge','color'],views:123456,likes:12000,duration:82,
@@ -158,7 +159,7 @@ test('Radar analysis, saved ideas and account switch never crash',async()=>{
  app.evaluate('setPage("recommended")');
  assert.match(app.html(),/Recommended for/);
  app.evaluate('setPage("analytics")');
- assert.match(app.html(),/channel.*analytics/i);
+ assert.match(app.html(),/FIRST-PARTY PERFORMANCE/i);
 });
 
 test('preference reset and metadata basics stay type-safe',()=>{
