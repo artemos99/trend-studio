@@ -1,0 +1,43 @@
+name: Trend Studio QA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app.js'
+      - 'cloud.js'
+      - 'pro.js'
+      - 'discovery.js'
+      - 'index.html'
+      - 'qa/**'
+      - '.github/workflows/qa.yml'
+  pull_request:
+    paths:
+      - 'app.js'
+      - 'cloud.js'
+      - 'pro.js'
+      - 'discovery.js'
+      - 'index.html'
+      - 'qa/**'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Integrated tab and workflow regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --check app.js
+          node --check cloud.js
+          node --check pro.js
+          node --check discovery.js
+      - name: Integrated workflow tests
+        run: node --test qa/site.test.cjs
