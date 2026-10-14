@@ -707,7 +707,12 @@ window.TrendBridge=Object.freeze({
   const regions=['US','GB','CA','IN','BR','MX','DE','AU'];
   const langs=['en','es','ru','pt','de','fr','hi'];
   const days=[7,30,90,365].includes(Number(options.days))?Number(options.days):0;
+  // YouTube's search API only supports coarse videoDuration bands:
+  // short <4min, medium 4–20min, long >20min. Our UI applies exact
+  // 3-minute likely-Shorts and other requested ranges after fetching details.
+  const videoDuration=['short','medium','long'].includes(options.videoDuration)?options.videoDuration:'';
   const params={part:'snippet',type:'video',q,maxResults:50,
+   ...(videoDuration?{videoDuration}:{}) ,
    order:orders.includes(options.order)?options.order:'relevance',
    safeSearch:'moderate',
    ...(days?{publishedAfter:new Date(Date.now()-days*86400000).toISOString()}:{}),
