@@ -7,38 +7,83 @@ const validId=x=>/^[A-Za-z0-9_-]{11}$/.test(String(x||""));
 const short=x=>Number(x||0).toLocaleString("en-US");
 const ago=x=>Math.max(1,(Date.now()-new Date(x||Date.now()).getTime())/86400000);
 const pct=(ratio)=>Math.round(Number(ratio||0)*100);
-const W={step:1,theme:"",results:[],selected:new Set(),curves:new Map(),errors:new Map(),searching:false,analyzing:false,found:false,reviewed:false};
-function chosen(){return (source()?.ownVideos()||[]).filter(v=>W.selected.has(v.id));}
+const W={step:1,theme:"",results:[],selected:new Set(),curves:new Map(),errors:new Map(),searching:false,analyzing:false,found:false,reviewed:false,busyFile:false,sort:"relevance",showAll:false,previewId:null};
+function localVideos(){
+ return comp.sources.filter(f=>f.localOnly).map(f=>({
+  id:f.youtubeId,snippet:{title:f.displayName||f.name,publishedAt:new Date().toISOString(),description:"",tags:[]},
+  statistics:{viewCount:0,likeCount:0},contentDetails:{duration:""},local:true,seconds:f.duration,
+  _sourceId:f.id
+ }));
+}
+function availableVideos(){return [...(source()?.ownVideos()||[]),...localVideos()];}
+function chosen(){return availableVideos().filter(v=>W.selected.has(v.id));}
+function isLocal(v){return Boolean(v.local);}
+function videoArt(v){
+ return isLocal(v)?'<div class="studio-local-thumb" aria-hidden="true">🎞<span>LOCAL FOOTAGE</span></div>':
+ '<img src="https://i.ytimg.com/vi/'+h(v.id)+'/mqdefault.jpg" loading="lazy" alt="'+h(v.snippet?.title)+'">';
+}
 function stats(v){const views=Number(v.statistics?.viewCount)||0;return{views,pace:views/ago(v.snippet?.publishedAt)};}
-function duration(v){return parseDuration(v.contentDetails?.duration);}
+function duration(v){return v.local?Number(v.seconds||0):parseDuration(v.contentDetails?.duration);}
 function fileFor(id){return comp.sources.find(x=>x.youtubeId===id&&x.theme===comp.theme);}
 function peaksFor(v){
  const s=fileFor(v.id),r=W.curves.get(v.id)||[];
  return compPeaks({id:v.id,duration:s?.duration||duration(v)||1,rows:r});
 }
-function makeVideoCard(v,i){
+function makeVideoCard(v){
  const st=stats(v),selected=W.selected.has(v.id);
  return '<label class="studio-video-card '+(selected?"selected":"")+'"><input type="checkbox" data-studio-pick="'+h(v.id)+'" '+(selected?"checked":"")+'><div class="studio-video-body">'+
- '<img src="https://i.ytimg.com/vi/'+h(v.id)+'/mqdefault.jpg" loading="lazy" alt="'+h(v.snippet?.title)+'"><div><strong>'+h(v.snippet?.title)+'</strong>'+
- '<small>'+short(st.views)+' views · '+short(Math.round(st.pace))+' avg. views/day</small>'+
- '<small>'+h(new Date(v.snippet?.publishedAt).toLocaleDateString())+' · '+compSec(duration(v))+'</small>'+
+ videoArt(v)+'<div><strong>'+h(v.snippet?.title)+'</strong>'+
+ '<small>'+(isLocal(v)?'Local original · manual highlights':short(st.views)+' views · '+short(Math.round(st.pace))+' avg. views/day')+'</small>'+
+ '<small>'+(isLocal(v)?'Ready for editing':h(new Date(v.snippet?.publishedAt).toLocaleDateString()))+' · '+compSec(duration(v))+'</small>'+
  '</div></div></label>';
 }
+async function addLocalFiles(files){
+ if(comp.rendering||W.busyFile)return;
+ const incoming=[...(files||[])].filter(Boolean).slice(0,12);
+ if(!incoming.length)return;
+ W.busyFile=true;
+ const errors=[];let count=0;
+ for(const file of incoming){
+  try{
+   if(!/\.(mp4|mov|m4v|webm)$/i.test(file.name)&&!String(file.type).startsWith('video/'))throw Error('Select a video file');
+   if(file.size>3*1024**3)throw Error('File larger than 3 GB; use a shorter original');
+   const info=await compLoadVideo(file);
+   if(!(info.duration>0)&&Number.isFinite(info.duration))throw Error('No playable video duration');
+   const id=compId(),youtubeId='local:'+id;
+   const item={id,youtubeId,localOnly:true,displayName:file.name,theme:W.theme||'Custom',
+    name:file.name,file,duration:info.duration,width:info.width,height:info.height,
+    rows:[],signal:'Manual selection',manualStart:0,manualEnd:Math.min(12,info.duration)};
+   comp.sources.push(item);W.selected.add(youtubeId);count++;
+  }catch(e){errors.push(file.name+': '+(e.message||e));}
+ }
+ W.busyFile=false;
+ if(count){
+  if(!W.theme)W.theme='Custom';comp.theme=W.theme;W.found=true;W.showAll=true;
+  updateResults();render();toast(count+' local file(s) ready. '+(errors.length?errors.length+' could not be opened.':'Choose the videos and continue.'));
+ }else toast(errors.slice(0,2).join(' · ')||'No videos were imported.');
+}
+function updateResults(){
+ const all=availableVideos(),words=W.theme.toLowerCase().split(/\s+/).filter(x=>x.length>1);
+ W.results=all.map(v=>{
+  const sn=v.snippet||{},title=String(sn.title||'').toLowerCase(),
+   desc=String(sn.description||'').toLowerCase(),tags=(sn.tags||[]).join(' ').toLowerCase();
+  const hit=words.reduce((a,w)=>a+(title.includes(w)?5:0)+(tags.includes(w)?2:0)+(desc.includes(w)?1:0),0);
+  return {v,hit,pace:stats(v).pace};
+ }).filter(x=>W.showAll||x.hit>0)
+ .sort((a,b)=>{
+  if(W.sort==='views')return stats(b.v).views-stats(a.v).views;
+  if(W.sort==='pace')return b.pace-a.pace;
+  if(W.sort==='newest')return Date.parse(b.v.snippet?.publishedAt||0)-Date.parse(a.v.snippet?.publishedAt||0);
+  return b.hit-a.hit||b.pace-a.pace;
+ }).map(x=>x.v);
+}
 function findTheme(){
- const input=document.getElementById("studio-theme"),theme=String(input?.value||"").trim().slice(0,90);
- if(theme.length<2)return toast("Type a theme, such as mystery box or hide and seek.");
- if(!source()?.connected())return toast("Connect your YouTube channel first.");
- const own=source().ownVideos();
- if(!own.length)return toast("No channel uploads found yet. Reconnect YouTube to refresh your videos.");
- W.theme=theme;comp.theme=theme;W.found=true;W.selected.clear();W.curves.clear();W.errors.clear();W.reviewed=false;
- const words=theme.toLowerCase().split(/\s+/).filter(x=>x.length>1);
- const results=own.map(v=>{
-  const sn=v.snippet||{},title=String(sn.title||"").toLowerCase(),description=String(sn.description||"").toLowerCase();
-  const tags=(sn.tags||[]).join(" ").toLowerCase();const match=words.reduce((a,w)=>a+(title.includes(w)?4:0)+(tags.includes(w)?2:0)+(description.includes(w)?1:0),0);
-  return {v,match};
- }).filter(x=>x.match>0).sort((a,b)=>b.match-a.match||stats(b.v).pace-stats(a.v).pace);
- W.results=results.map(x=>x.v);
- if(!W.results.length)toast("No matching uploads in your 250 most recent videos. Try another theme.");
+ const input=document.getElementById('studio-theme'),theme=String(input?.value||'').trim().slice(0,90);
+ if(theme.length<2)return toast('Enter a theme such as mystery box, or upload your original footage below.');
+ if(!availableVideos().length)return toast('Connect YouTube or upload a video file to begin.');
+ W.theme=theme;comp.theme=theme;W.found=true;W.selected.clear();W.curves.clear();W.errors.clear();W.reviewed=false;W.showAll=false;
+ updateResults();
+ if(!W.results.length){W.showAll=true;updateResults();toast('No exact topic match. Showing all uploads so you can select manually.');}
  render();
 }
 async function analyze(){
@@ -48,6 +93,8 @@ async function analyze(){
  comp.theme=W.theme;W.step=2;W.analyzing=true;W.curves.clear();W.errors.clear();render();
  for(const v of videos){
   try{
+   if(isLocal(v))throw Error('Local original: use manual timing, or connect YouTube for retention data.');
+   if(!source()?.connected())throw Error('YouTube authorization expired. Reconnect, or set timing manually.');
    const points=await source().ownRetention(v.id);
    if(points.length<3)throw Error("Retention data is not available for this video.");
    W.curves.set(v.id,points);
@@ -61,19 +108,21 @@ function pointsChart(v){
  if(!rows.length)return '<p class="studio-note">No private retention points available. You can still include this video, but its cuts need manual review.</p>';
  const max=Math.max(1,...rows.map(x=>x.ratio));
  const bars=rows.filter((_,i)=>i%Math.max(1,Math.ceil(rows.length/45))===0).slice(0,46);
- const peaks=compPeaks({id:v.id,rows,duration:Math.max(1,duration(v))}).slice(0,14);
+ const peaks=compPeaks({id:v.id,rows,duration:Math.max(1,duration(v))}).slice(0,6);
  return '<div class="studio-peaks"><div class="studio-retention-chart" aria-label="Actual audience retention by video position">'+bars.map(p=>'<span title="'+pct(p.ratio)+'% watch ratio at '+Math.round(p.pos*100)+'% of video" style="height:'+Math.max(3,p.ratio/max*100)+'%"></span>').join("")+'</div>'+
  '<div class="studio-note">Watch-ratio curve from YouTube Analytics. Peaks are local retention highs, not proof of rewatches.</div>'+
  '<div class="studio-peak-list">'+(peaks.length?peaks.map(p=>'<a target="_blank" rel="noopener noreferrer" href="https://www.youtube.com/watch?v='+v.id+'&t='+Math.floor(p.start)+'s">▶ '+compSec(p.start)+'–'+compSec(p.end)+' · '+pct(p.value)+'% watch ratio ↗</a>').join(""):'No clear peaks; review manually.')+'</div></div>';
 }
 function candidateRow(v){
  const st=stats(v),local=fileFor(v.id),err=W.errors.get(v.id);
- return '<article class="panel studio-upload-card"><div class="studio-upload-head"><img src="https://i.ytimg.com/vi/'+v.id+'/mqdefault.jpg" alt="'+h(v.snippet?.title)+'" loading="lazy"><div><strong>'+h(v.snippet?.title)+'</strong>'+
- '<small>'+short(st.views)+' views · '+short(Math.round(st.pace))+' views/day lifetime average</small><small>'+compSec(duration(v))+' · '+(W.curves.get(v.id)?.length||0)+' actual retention points</small></div></div>'+
+ return '<article class="panel studio-upload-card"><div class="studio-upload-head">'+videoArt(v)+'<div><strong>'+h(v.snippet?.title)+'</strong>'+
+ '<small>'+(v.local?'Local footage':short(st.views)+' views · '+short(Math.round(st.pace))+' views/day lifetime average')+'</small><small>'+compSec(duration(v))+' · '+(W.curves.get(v.id)?.length||0)+' actual retention points</small></div></div>'+
  (err?'<p class="studio-warning">Retention unavailable: '+h(err)+'</p>':"")+
  pointsChart(v)+
  '<div class="studio-source-file"><label class="comp-file-btn">'+(local?'✓ Replace original file':'↑ Attach matching original video file')+'<input type="file" accept="video/*,.mp4,.mov,.webm,.m4v" data-studio-upload="'+v.id+'"></label>'+
  (local?'<span class="tag green">✓ '+h(local.name)+' · '+compSec(local.duration)+'</span>':'<span class="studio-note">Required for cutting and exporting. YouTube streams cannot be downloaded by the app.</span>')+'</div>'+
+ (local?'<button type="button" class="btn btn-outline studio-preview-btn" data-studio-preview-source="'+h(local.id)+'">▶ Preview original</button>':'')+
+ (local&&W.previewId===local.id?'<video class="studio-source-preview" controls preload="metadata" src="'+h(previewURL(local))+'"></video>':'')+
  (local?'<div class="studio-manual"><label>Manual start (s)<input class="field" type="number" min="0" max="'+local.duration+'" step="0.5" data-studio-manual-start="'+v.id+'" value="'+Number(local.manualStart||0)+'"></label>'+
  '<label>Manual end (s)<input class="field" type="number" min="0" max="'+local.duration+'" step="0.5" data-studio-manual-end="'+v.id+'" value="'+Number(local.manualEnd||12)+'"></label></div>':"")+'</article>';
 }
@@ -94,8 +143,10 @@ async function attachFile(id,file){
  }catch(e){toast("Source file error: "+e.message);}
 }
 function buildTimeline(){
+ if(W.analyzing||comp.rendering)return;
  const vids=chosen(),attached=vids.filter(x=>fileFor(x.id));
- if(!attached.length)return toast("Attach at least one matching original video file.");
+ if(!attached.length)return toast("Attach your original video files before building the compilation.");
+ if(attached.length!==vids.length)return toast("Attach original footage for all "+vids.length+" selected videos, or go back and deselect the missing ones.");
  comp.clips=[];compResultClear();
  const all=[];
  for(const v of attached){
@@ -175,6 +226,7 @@ function wizardView(){
  (comp.resultURL?'<div class="studio-complete"><h3>✓ Export finished</h3><video src="'+comp.resultURL+'" controls preload="metadata"></video><a href="'+comp.resultURL+'" download="Trend-Studio-'+compSafeName(W.theme)+'-Highlights.webm" class="btn btn-primary">↓ Download WebM video ('+compFileSize(comp.result?.size||0)+')</a><p>Video is processed locally in your browser; nothing was automatically uploaded to YouTube.</p></div>':"")+
  '<p class="studio-note">WebM export, 720p, keeps source audio. Browser encoding can be slow; leave this tab open. Large jobs may require desktop editing software.</p></div>';
 }
+function previewURL(src){if(!src.previewURL)src.previewURL=URL.createObjectURL(src.file);return src.previewURL;}
 const oldStage=compStage;
 compStage=function(){return wizardView();};
 function resizeClip(id,key,val){
