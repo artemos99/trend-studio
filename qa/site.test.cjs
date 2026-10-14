@@ -182,7 +182,7 @@ test('watchlist autocomplete resolves real channels, displays logos and avoids d
  app.window.TrendBridge={
   connected(){return true;},publicChannels(){return{[channelId]:channel};},
   async searchChannels(q){assert.equal(q,'Testing Channel');return [{id:{channelId}}];},
-  async channels(ids){assert.deepEqual([...ids],[channelId]);return [channel];},
+  async channels(ids){assert.equal(ids.join(','),channelId);return [channel];},
   scan(){scans++;return Promise.resolve();},
   ownChannel(){return null;},ownVideos(){return [];}
  };
